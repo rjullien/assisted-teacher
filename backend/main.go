@@ -16,7 +16,7 @@ func main() {
 	port := flag.String("port", envOr("PORT", "9847"), "HTTP port")
 	workDir := flag.String("workdir", envOr("WORKSPACE_DIR", "./workspace"), "Workspace directory for course files")
 	hermesURL := flag.String("hermes-url", envOr("HERMES_URL", "http://hermes-lya.openclaw.svc.cluster.local:8642"), "Hermes API server URL")
-	hermesKey := flag.String("hermes-key", envOr("BIFROST_API_KEY", ""), "Hermes API server key")
+	hermesKey := flag.String("hermes-key", envOr("HERMES_API_KEY", ""), "Hermes API server key")
 	flag.Parse()
 
 	// Ensure workspace exists
@@ -46,7 +46,7 @@ func main() {
 		mux.HandleFunc("/ws/acp", hermesBridge.HandleWebSocket)
 		log.Printf("Hermes bridge: %s", *hermesURL)
 	} else {
-		log.Println("WARNING: No BIFROST_API_KEY set — chat disabled")
+		log.Println("WARNING: No HERMES_API_KEY set — chat disabled")
 	}
 
 	// Health
