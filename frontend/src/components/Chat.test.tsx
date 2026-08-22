@@ -2,13 +2,6 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import Chat from './Chat'
 
-// Helper to get the mock WebSocket instance
-function getLastWebSocket(): any {
-  // Access the last created instance through the mock
-  const instances = (WebSocket as any)
-  return instances
-}
-
 describe('Chat', () => {
   const mockOnInsert = vi.fn()
 
@@ -16,9 +9,21 @@ describe('Chat', () => {
     vi.resetAllMocks()
   })
 
+  // Helper: render Chat and wait for WebSocket to connect
+  async function renderConnected(props?: { currentFile?: string | null }) {
+    const result = render(
+      <Chat currentFile={props?.currentFile ?? null} onInsert={mockOnInsert} />
+    )
+    // Wait for the mock WebSocket onopen (setTimeout 0) to fire
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+    return result
+  }
+
   it('renders the chat header', () => {
     render(<Chat currentFile={null} onInsert={mockOnInsert} />)
-    expect(screen.getByText('💬 Assistant IA')).toBeInTheDocument()
+    expect(screen.getByText(/Assistant IA/)).toBeInTheDocument()
   })
 
   it('shows example prompts when empty', () => {
@@ -27,20 +32,20 @@ describe('Chat', () => {
     expect(screen.getByText(/gap-fill/)).toBeInTheDocument()
   })
 
-  it('has an input textarea and send button', () => {
-    render(<Chat currentFile="B1/unit5.md" onInsert={mockOnInsert} />)
+  it('has an input textarea and send button', async () => {
+    await renderConnected({ currentFile: 'B1/unit5.md' })
     expect(screen.getByPlaceholderText("Demandez à l'IA...")).toBeInTheDocument()
     expect(screen.getByText('Envoyer')).toBeInTheDocument()
   })
 
-  it('send button is disabled when input is empty', () => {
-    render(<Chat currentFile="B1/unit5.md" onInsert={mockOnInsert} />)
+  it('send button is disabled when input is empty', async () => {
+    await renderConnected({ currentFile: 'B1/unit5.md' })
     const btn = screen.getByText('Envoyer')
     expect(btn).toBeDisabled()
   })
 
-  it('send button is enabled when input has text', () => {
-    render(<Chat currentFile="B1/unit5.md" onInsert={mockOnInsert} />)
+  it('send button is enabled when input has text and WS is connected', async () => {
+    await renderConnected({ currentFile: 'B1/unit5.md' })
     const textarea = screen.getByPlaceholderText("Demandez à l'IA...")
     fireEvent.change(textarea, { target: { value: 'Hello' } })
     const btn = screen.getByText('Envoyer')
@@ -48,7 +53,7 @@ describe('Chat', () => {
   })
 
   it('displays user message after sending', async () => {
-    render(<Chat currentFile="B1/unit5.md" onInsert={mockOnInsert} />)
+    await renderConnected({ currentFile: 'B1/unit5.md' })
 
     const textarea = screen.getByPlaceholderText("Demandez à l'IA...")
     fireEvent.change(textarea, { target: { value: 'Generate exercises' } })
@@ -63,7 +68,7 @@ describe('Chat', () => {
   })
 
   it('sends Enter to submit (without Shift)', async () => {
-    render(<Chat currentFile="B1/unit5.md" onInsert={mockOnInsert} />)
+    await renderConnected({ currentFile: 'B1/unit5.md' })
 
     const textarea = screen.getByPlaceholderText("Demandez à l'IA...")
     fireEvent.change(textarea, { target: { value: 'Test message' } })
@@ -74,8 +79,8 @@ describe('Chat', () => {
     })
   })
 
-  it('Shift+Enter does NOT submit', () => {
-    render(<Chat currentFile="B1/unit5.md" onInsert={mockOnInsert} />)
+  it('Shift+Enter does NOT submit', async () => {
+    await renderConnected({ currentFile: 'B1/unit5.md' })
 
     const textarea = screen.getByPlaceholderText("Demandez à l'IA...")
     fireEvent.change(textarea, { target: { value: 'multiline' } })

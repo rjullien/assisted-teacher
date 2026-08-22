@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { getJSON, putText, handleAuthExpired } from '../api'
 
 interface FileNode {
   name: string
@@ -18,14 +19,13 @@ export default function FileTree({ onSelect, refreshKey }: FileTreeProps) {
   const [activePath, setActivePath] = useState<string | null>(null)
 
   const loadTree = async () => {
-    try {
-      const res = await fetch('/api/files')
-      if (res.ok) {
-        const data = await res.json()
-        setTree(data || [])
-      }
-    } catch (err) {
-      console.error('Failed to load tree:', err)
+    const res = await getJSON<FileNode[]>('/api/files')
+    if (res.authExpired) {
+      handleAuthExpired()
+      return
+    }
+    if (res.ok && res.data) {
+      setTree(res.data)
     }
   }
 
@@ -44,11 +44,14 @@ export default function FileTree({ onSelect, refreshKey }: FileTreeProps) {
     const name = prompt('Nom du nouveau cours (ex: unit7.md)')
     if (!name) return
     const path = name.endsWith('.md') ? name : name + '.md'
-    await fetch(`/api/file?path=${encodeURIComponent(path)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'text/plain' },
-      body: `# ${name.replace(/\.md$/, '')}\n\n`,
-    })
+    const res = await putText(
+      `/api/file?path=${encodeURIComponent(path)}`,
+      `# ${name.replace(/\.md$/, '')}\n\n`
+    )
+    if (res.authExpired) {
+      handleAuthExpired()
+      return
+    }
     loadTree()
   }
 

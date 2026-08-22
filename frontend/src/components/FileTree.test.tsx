@@ -22,16 +22,46 @@ const mockTree = [
   },
 ]
 
+/** Create a mock Response that matches what the api.ts request() function expects */
+function mockJsonResponse(data: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get: (name: string) => {
+        if (name.toLowerCase() === 'content-type') return 'application/json'
+        return null
+      },
+    },
+    json: () => Promise.resolve(data),
+    text: () => Promise.resolve(JSON.stringify(data)),
+  }
+}
+
+function mockTextResponse(text: string, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get: (name: string) => {
+        if (name.toLowerCase() === 'content-type') return 'text/plain'
+        return null
+      },
+    },
+    json: () => Promise.reject(new Error('not json')),
+    text: () => Promise.resolve(text),
+  }
+}
+
 describe('FileTree', () => {
   const mockOnSelect = vi.fn()
   const mockOnRefresh = vi.fn()
 
   beforeEach(() => {
     vi.resetAllMocks()
-    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve(mockTree),
-    })
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      mockJsonResponse(mockTree)
+    )
   })
 
   it('renders the header', async () => {
@@ -93,10 +123,9 @@ describe('FileTree', () => {
   })
 
   it('shows empty state when no files', async () => {
-    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve([]),
-    })
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      mockJsonResponse([])
+    )
 
     render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
 

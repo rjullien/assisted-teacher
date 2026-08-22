@@ -5,6 +5,7 @@ import FileTree from './components/FileTree'
 import Editor from './components/Editor'
 import Chat from './components/Chat'
 import Toolbar from './components/Toolbar'
+import { getText, putText, postBlob, handleAuthExpired } from './api'
 
 export default function App() {
   const [currentFile, setCurrentFile] = useState<string | null>(null)
@@ -12,29 +13,26 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0)
 
   const handleFileSelect = async (path: string) => {
-    try {
-      const res = await fetch(`/api/file?path=${encodeURIComponent(path)}`)
-      if (res.ok) {
-        const text = await res.text()
-        setCurrentFile(path)
-        setFileContent(text)
-      }
-    } catch (err) {
-      console.error('Failed to load file:', err)
+    const res = await getText(`/api/file?path=${encodeURIComponent(path)}`)
+    if (res.authExpired) {
+      handleAuthExpired()
+      return
+    }
+    if (res.ok && res.data !== null) {
+      setCurrentFile(path)
+      setFileContent(res.data)
     }
   }
 
   const handleSave = async (content: string) => {
     if (!currentFile) return
-    try {
-      await fetch(`/api/file?path=${encodeURIComponent(currentFile)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'text/plain' },
-        body: content,
-      })
+    const res = await putText(`/api/file?path=${encodeURIComponent(currentFile)}`, content)
+    if (res.authExpired) {
+      handleAuthExpired()
+      return
+    }
+    if (res.ok) {
       setFileContent(content)
-    } catch (err) {
-      console.error('Failed to save file:', err)
     }
   }
 
@@ -47,23 +45,18 @@ export default function App() {
 
   const handleExport = async (format: 'pdf' | 'docx') => {
     if (!currentFile) return
-    try {
-      const res = await fetch(`/api/export/${format}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: currentFile }),
-      })
-      if (res.ok) {
-        const blob = await res.blob()
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = currentFile.replace(/\.md$/, `.${format}`)
-        a.click()
-        URL.revokeObjectURL(url)
-      }
-    } catch (err) {
-      console.error('Export failed:', err)
+    const res = await postBlob(`/api/export/${format}`, { path: currentFile })
+    if (res.authExpired) {
+      handleAuthExpired()
+      return
+    }
+    if (res.ok && res.blob) {
+      const url = URL.createObjectURL(res.blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = currentFile.replace(/\.md$/, `.${format}`)
+      a.click()
+      URL.revokeObjectURL(url)
     }
   }
 
