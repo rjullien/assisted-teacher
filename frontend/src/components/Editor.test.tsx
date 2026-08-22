@@ -1,20 +1,6 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import Editor from './Editor'
-
-// Mock Milkdown — it requires a browser DOM with full ProseMirror support
-// which jsdom doesn't provide. We mock the heavy parts.
-vi.mock('@milkdown/react', () => ({
-  Milkdown: () => <div data-testid="milkdown-editor">Milkdown Editor</div>,
-  MilkdownProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  useEditor: () => ({ get: vi.fn() }),
-}))
-
-vi.mock('@milkdown/crepe', () => ({
-  Crepe: vi.fn().mockImplementation(() => ({
-    on: vi.fn(),
-  })),
-}))
 
 describe('Editor', () => {
   const mockOnChange = vi.fn()
@@ -41,17 +27,28 @@ describe('Editor', () => {
     expect(screen.getByText(/Ctrl\+S/)).toBeInTheDocument()
   })
 
-  it('renders Milkdown editor when file is selected', () => {
+  it('renders textarea with content when file is selected', () => {
     render(
-      <Editor content="# Test" onChange={mockOnChange} onSave={mockOnSave} filePath="B1/unit5.md" />
+      <Editor content="# Test content" onChange={mockOnChange} onSave={mockOnSave} filePath="B1/unit5.md" />
     )
-    expect(screen.getByTestId('milkdown-editor')).toBeInTheDocument()
+    const textarea = screen.getByPlaceholderText('Écrivez en Markdown...')
+    expect(textarea).toBeInTheDocument()
+    expect(textarea).toHaveValue('# Test content')
   })
 
-  it('does not render Milkdown when no file is selected', () => {
+  it('does not render textarea when no file is selected', () => {
     render(
       <Editor content="" onChange={mockOnChange} onSave={mockOnSave} filePath={null} />
     )
-    expect(screen.queryByTestId('milkdown-editor')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Écrivez en Markdown...')).not.toBeInTheDocument()
+  })
+
+  it('calls onChange when user types', () => {
+    render(
+      <Editor content="Hello" onChange={mockOnChange} onSave={mockOnSave} filePath="test.md" />
+    )
+    const textarea = screen.getByPlaceholderText('Écrivez en Markdown...')
+    fireEvent.change(textarea, { target: { value: 'Hello world' } })
+    expect(mockOnChange).toHaveBeenCalledWith('Hello world')
   })
 })

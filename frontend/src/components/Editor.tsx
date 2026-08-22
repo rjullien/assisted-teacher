@@ -1,6 +1,4 @@
-import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
-import { Crepe } from '@milkdown/crepe'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 
 interface EditorProps {
   content: string
@@ -9,24 +7,10 @@ interface EditorProps {
   filePath: string | null
 }
 
-// Inner editor component that uses Milkdown
-function MilkdownEditor({ content, onChange, onSave }: Omit<EditorProps, 'filePath'>) {
+export default function Editor({ content, onChange, onSave, filePath }: EditorProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const contentRef = useRef(content)
   contentRef.current = content
-
-  const { get } = useEditor((root) => {
-    // Use Crepe for a batteries-included WYSIWYG Markdown experience
-    const crepe = new Crepe({
-      root,
-      defaultValue: content,
-    })
-    crepe.on((listener) => {
-      listener.markdownUpdated((_ctx, markdown) => {
-        onChange(markdown)
-      })
-    })
-    return crepe
-  })
 
   // Save on Ctrl/Cmd+S
   useEffect(() => {
@@ -38,12 +22,21 @@ function MilkdownEditor({ content, onChange, onSave }: Omit<EditorProps, 'filePa
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [onSave, get])
+  }, [onSave])
 
-  return <Milkdown />
-}
+  // Auto-resize textarea
+  const autoResize = useCallback(() => {
+    const ta = textareaRef.current
+    if (ta) {
+      ta.style.height = 'auto'
+      ta.style.height = ta.scrollHeight + 'px'
+    }
+  }, [])
 
-export default function Editor({ content, onChange, onSave, filePath }: EditorProps) {
+  useEffect(() => {
+    autoResize()
+  }, [content, autoResize])
+
   if (!filePath) {
     return (
       <div className="editor-panel">
@@ -61,10 +54,18 @@ export default function Editor({ content, onChange, onSave, filePath }: EditorPr
         <span style={{ fontSize: '11px' }}>Ctrl+S pour sauvegarder</span>
       </div>
       <div className="editor-content">
-        {/* key forces remount when file changes so Milkdown reloads content */}
-        <MilkdownProvider key={filePath}>
-          <MilkdownEditor content={content} onChange={onChange} onSave={onSave} />
-        </MilkdownProvider>
+        <textarea
+          ref={textareaRef}
+          className="editor-textarea"
+          value={content}
+          onChange={(e) => {
+            onChange(e.target.value)
+            autoResize()
+          }}
+          onBlur={() => onSave(contentRef.current)}
+          spellCheck
+          placeholder="Écrivez en Markdown..."
+        />
       </div>
     </div>
   )
