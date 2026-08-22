@@ -15,7 +15,8 @@ import (
 func main() {
 	port := flag.String("port", envOr("PORT", "9847"), "HTTP port")
 	workDir := flag.String("workdir", envOr("WORKSPACE_DIR", "./workspace"), "Workspace directory for course files")
-	agentCmd := flag.String("agent", envOr("ACP_AGENT_CMD", ""), "ACP agent command (e.g. 'hermes acp')")
+	hermesURL := flag.String("hermes-url", envOr("HERMES_URL", "http://hermes-lya.openclaw.svc.cluster.local:8642"), "Hermes API server URL")
+	hermesKey := flag.String("hermes-key", envOr("BIFROST_API_KEY", ""), "Hermes API server key")
 	flag.Parse()
 
 	// Ensure workspace exists
@@ -39,13 +40,13 @@ func main() {
 	mux.HandleFunc("POST /api/export/pdf", exportHandler.ExportPDF)
 	mux.HandleFunc("POST /api/export/docx", exportHandler.ExportDOCX)
 
-	// ACP WebSocket bridge
-	if *agentCmd != "" {
-		acpBridge := bridge.NewACPBridge(*agentCmd, *workDir)
-		mux.HandleFunc("/ws/acp", acpBridge.HandleWebSocket)
-		log.Printf("ACP agent: %s", *agentCmd)
+	// Hermes bridge (connects to Lya via HTTP Runs API — reconnectable, no timeout issues)
+	if *hermesKey != "" {
+		hermesBridge := bridge.NewHermesBridge(*hermesURL, *hermesKey)
+		mux.HandleFunc("/ws/acp", hermesBridge.HandleWebSocket)
+		log.Printf("Hermes bridge: %s", *hermesURL)
 	} else {
-		log.Println("WARNING: No ACP agent configured (set ACP_AGENT_CMD)")
+		log.Println("WARNING: No BIFROST_API_KEY set — chat disabled")
 	}
 
 	// Health
