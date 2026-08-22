@@ -1,10 +1,8 @@
 package main
 
 import (
-	"embed"
 	"flag"
 	"fmt"
-	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -14,13 +12,10 @@ import (
 	"github.com/rjullien/opencode-usage-tracker/cours-ia/backend/internal/export"
 )
 
-//go:embed static/*
-var staticFS embed.FS
-
 func main() {
 	port := flag.String("port", envOr("PORT", "9847"), "HTTP port")
 	workDir := flag.String("workdir", envOr("WORKSPACE_DIR", "./workspace"), "Workspace directory for course files")
-	agentCmd := flag.String("agent", envOr("ACP_AGENT_CMD", ""), "ACP agent command (e.g. 'opencode-ai acp' or 'openclaw acp')")
+	agentCmd := flag.String("agent", envOr("ACP_AGENT_CMD", ""), "ACP agent command (e.g. 'hermes acp')")
 	flag.Parse()
 
 	// Ensure workspace exists
@@ -59,31 +54,11 @@ func main() {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// Serve frontend SPA (embedded or from disk)
-	staticSub, err := fs.Sub(staticFS, "static")
-	if err != nil {
-		log.Fatalf("cannot access embedded static: %v", err)
-	}
-	fileServer := http.FileServer(http.FS(staticSub))
-	mux.Handle("/", spaHandler(fileServer))
-
 	addr := fmt.Sprintf(":%s", *port)
-	log.Printf("cours-ia server listening on %s (workspace: %s)", addr, *workDir)
+	log.Printf("assisted-teacher backend listening on %s (workspace: %s)", addr, *workDir)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatal(err)
 	}
-}
-
-// spaHandler serves static files, falling back to index.html for SPA routing
-func spaHandler(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Don't intercept API or WS routes
-		if len(r.URL.Path) > 4 && (r.URL.Path[:4] == "/api" || r.URL.Path[:3] == "/ws") {
-			http.NotFound(w, r)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func envOr(key, fallback string) string {
