@@ -22,16 +22,46 @@ const mockTree = [
   },
 ]
 
+/** Create a mock Response that matches what the api.ts request() function expects */
+function mockJsonResponse(data: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get: (name: string) => {
+        if (name.toLowerCase() === 'content-type') return 'application/json'
+        return null
+      },
+    },
+    json: () => Promise.resolve(data),
+    text: () => Promise.resolve(JSON.stringify(data)),
+  }
+}
+
+function mockTextResponse(text: string, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get: (name: string) => {
+        if (name.toLowerCase() === 'content-type') return 'text/plain'
+        return null
+      },
+    },
+    json: () => Promise.reject(new Error('not json')),
+    text: () => Promise.resolve(text),
+  }
+}
+
 describe('FileTree', () => {
   const mockOnSelect = vi.fn()
   const mockOnRefresh = vi.fn()
 
   beforeEach(() => {
     vi.resetAllMocks()
-    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve(mockTree),
-    })
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      mockJsonResponse(mockTree)
+    )
   })
 
   it('renders the header', async () => {
@@ -93,10 +123,9 @@ describe('FileTree', () => {
   })
 
   it('shows empty state when no files', async () => {
-    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve([]),
-    })
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      mockJsonResponse([])
+    )
 
     render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
 
@@ -134,6 +163,35 @@ describe('FileTree', () => {
     // Should not crash, show header at minimum
     await waitFor(() => {
       expect(screen.getByText('Mes cours')).toBeInTheDocument()
+    })
+  })
+
+  it('sanitizes filename on creation (spaces → _, special chars removed)', async () => {
+    vi.spyOn(window, 'prompt').mockReturnValue('Mon cours super! et génial?')
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(mockJsonResponse(mockTree)) // initial loadTree
+      .mockResolvedValueOnce(mockTextResponse('ok'))     // PUT file
+      .mockResolvedValueOnce(mockJsonResponse(mockTree)) // reload after create
+
+    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('+ Nouveau')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByText('+ Nouveau'))
+
+    await waitFor(() => {
+      // Should have called fetch with sanitized path
+      const putCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call: unknown[]) => String(call[0]).includes('/api/file?path=')
+      )
+      expect(putCall).toBeDefined()
+      const url = String(putCall![0])
+      // Extract the path param value (decoded)
+      const pathParam = decodeURIComponent(url.split('path=')[1])
+      // Should be sanitized: no spaces, no ?, no !
+      expect(pathParam).toBe('Mon_cours_super_et_génial.md')
     })
   })
 })

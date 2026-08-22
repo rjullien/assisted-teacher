@@ -10,7 +10,7 @@ describe('Toolbar', () => {
     render(
       <Toolbar currentFile={null} onExportPDF={mockExportPDF} onExportDOCX={mockExportDOCX} />
     )
-    expect(screen.getByText('📚 Cours IA')).toBeInTheDocument()
+    expect(screen.getByText('📚 Assistant Pédagogique')).toBeInTheDocument()
   })
 
   it('shows "Aucun fichier" when no file selected', () => {

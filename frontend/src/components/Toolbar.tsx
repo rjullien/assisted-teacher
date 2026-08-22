@@ -7,7 +7,7 @@ interface ToolbarProps {
 export default function Toolbar({ currentFile, onExportPDF, onExportDOCX }: ToolbarProps) {
   return (
     <div className="toolbar">
-      <h1>📚 Cours IA</h1>
+      <h1>📚 Assistant Pédagogique</h1>
       <span className="current-file">
         {currentFile || 'Aucun fichier sélectionné'}
       </span>
