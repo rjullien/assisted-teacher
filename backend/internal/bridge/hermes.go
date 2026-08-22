@@ -266,8 +266,8 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 	messages = append(messages, map[string]string{"role": "user", "content": content})
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"model":    "hermes-agent",
 		"messages": messages,
+		"provider": "custom",
 		"stream":   true,
 	})
 
