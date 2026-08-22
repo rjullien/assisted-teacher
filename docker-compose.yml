@@ -1,0 +1,26 @@
+services:
+  cours-ia:
+    build: .
+    container_name: cours-ia
+    ports:
+      - "9847:9847"
+    environment:
+      PORT: "9847"
+      WORKSPACE_DIR: "/workspace"
+      # ACP agent command — change to your preferred agent
+      # Options: "opencode-ai acp", "openclaw acp", "kiro-cli acp", "hermes acp"
+      ACP_AGENT_CMD: "${ACP_AGENT_CMD:-}"
+      # LLM provider keys (passed to the agent subprocess)
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      # If using Bifrost as provider
+      OPENCODE_BASE_URL: "${OPENCODE_BASE_URL:-http://bifrost:8080/v1}"
+    volumes:
+      - ./workspace:/workspace
+      - ./config:/config
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9847/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
