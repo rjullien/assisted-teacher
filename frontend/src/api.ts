@@ -108,14 +108,14 @@ export async function request<T = unknown>(
 
 // ── Convenience methods ──────────────────────────────────────────────────────
 
-/** GET JSON */
+/** GET JSON (no cache — always fresh) */
 export async function getJSON<T = unknown>(path: string, timeoutMs?: number): Promise<ApiResponse<T>> {
-  return request<T>(path, { timeoutMs })
+  return request<T>(path, { timeoutMs, cache: 'no-store' })
 }
 
-/** GET text (file content) */
+/** GET text (file content — no cache) */
 export async function getText(path: string): Promise<ApiResponse<string>> {
-  return request<string>(path)
+  return request<string>(path, { cache: 'no-store' })
 }
 
 /** PUT text (save file) */
