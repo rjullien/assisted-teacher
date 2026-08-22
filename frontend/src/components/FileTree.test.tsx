@@ -165,4 +165,33 @@ describe('FileTree', () => {
       expect(screen.getByText('Mes cours')).toBeInTheDocument()
     })
   })
+
+  it('sanitizes filename on creation (spaces → _, special chars removed)', async () => {
+    vi.spyOn(window, 'prompt').mockReturnValue('Mon cours super! et génial?')
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(mockJsonResponse(mockTree)) // initial loadTree
+      .mockResolvedValueOnce(mockTextResponse('ok'))     // PUT file
+      .mockResolvedValueOnce(mockJsonResponse(mockTree)) // reload after create
+
+    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('+ Nouveau')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByText('+ Nouveau'))
+
+    await waitFor(() => {
+      // Should have called fetch with sanitized path
+      const putCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call: unknown[]) => String(call[0]).includes('/api/file?path=')
+      )
+      expect(putCall).toBeDefined()
+      const url = String(putCall![0])
+      // Extract the path param value (decoded)
+      const pathParam = decodeURIComponent(url.split('path=')[1])
+      // Should be sanitized: no spaces, no ?, no !
+      expect(pathParam).toBe('Mon_cours_super_et_génial.md')
+    })
+  })
 })
