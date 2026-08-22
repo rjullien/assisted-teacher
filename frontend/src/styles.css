@@ -391,3 +391,35 @@ body {
 .split-view-view {
   overflow: hidden !important;
 }
+
+
+/* Auto-save indicator */
+.save-indicator {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  transition: opacity 0.3s, color 0.3s;
+}
+
+.save-indicator.unsaved {
+  color: var(--warning);
+}
+
+.save-indicator.saving {
+  color: var(--text-muted);
+}
+
+.save-indicator.saved {
+  color: var(--success);
+  animation: fade-in 0.2s ease-out;
+}
+
+.save-indicator.error {
+  color: var(--danger);
+  font-weight: 500;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
