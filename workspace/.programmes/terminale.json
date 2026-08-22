@@ -1,0 +1,149 @@
+{
+  "niveau": "Terminale",
+  "cecrl": {
+    "LVA": "B2",
+    "LVB": "B1+",
+    "LVC": "A2+/B1"
+  },
+  "axes_culturels": [
+    {
+      "numero": 1,
+      "titre": "Espace privé et espace public",
+      "description": "Les frontières entre vie privée et vie publique, leur évolution dans les sociétés anglophones contemporaines.",
+      "exemples_objets_etude": [
+        "Réseaux sociaux et exposition de soi",
+        "Lanceurs d'alerte (Snowden, Assange)",
+        "Droit à l'oubli et données personnelles",
+        "Architecture et urbanisme (gated communities, public spaces)"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 2,
+      "titre": "Territoire et mémoire",
+      "description": "La construction des territoires et des mémoires collectives dans le monde anglophone, entre héritage et conflits.",
+      "exemples_objets_etude": [
+        "Territoires autochtones et réconciliation",
+        "Le Mur de Berlin / le Mur entre USA et Mexique",
+        "Mémoire de l'esclavage et réparations",
+        "Lieux de mémoire et tourisme mémoriel"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 3,
+      "titre": "Fictions et réalités",
+      "description": "Les rapports entre fiction et réalité : comment les œuvres de fiction reflètent, interrogent ou transforment le réel dans la culture anglophone.",
+      "exemples_objets_etude": [
+        "Dystopies et littérature d'anticipation (Orwell, Atwood, Ishiguro)",
+        "Fake news et post-vérité",
+        "Docu-fictions et biopics",
+        "Réalité virtuelle et métavers"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 4,
+      "titre": "Enjeux de la communication",
+      "description": "Les transformations de la communication et leurs enjeux (médiatiques, politiques, interpersonnels) dans les sociétés anglophones.",
+      "exemples_objets_etude": [
+        "Rhétorique politique et discours (I have a dream, Yes we can)",
+        "Médias traditionnels vs nouveaux médias",
+        "Influence et manipulation (Cambridge Analytica)",
+        "Communication interculturelle et malentendus"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 5,
+      "titre": "Citoyenneté et univers virtuels",
+      "description": "L'exercice de la citoyenneté dans les univers numériques et virtuels, entre opportunités et dérives.",
+      "exemples_objets_etude": [
+        "Hacktivisme et cyberdissidence",
+        "Vote électronique et démocratie numérique",
+        "Harcèlement en ligne et modération",
+        "Économie virtuelle (crypto, NFT, gaming)"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 6,
+      "titre": "Royaume-Uni et ses nations",
+      "description": "Étude du Royaume-Uni dans sa diversité nationale (Angleterre, Écosse, Pays de Galles, Irlande du Nord) : identités, tensions, devenir commun. Axe obligatoire.",
+      "exemples_objets_etude": [
+        "Brexit et ses conséquences sur l'unité du Royaume",
+        "Indépendantisme écossais",
+        "Le conflit nord-irlandais et le processus de paix",
+        "Identité galloise et renouveau linguistique",
+        "La monarchie britannique : tradition et modernité"
+      ],
+      "obligatoire": true
+    }
+  ],
+  "contraintes": {
+    "axes_a_traiter": 5,
+    "axes_total": 6,
+    "axe_obligatoire": 6,
+    "note": "5 axes sur 6 doivent être traités dans l'année, dont l'axe 6 (Royaume-Uni et ses nations) obligatoirement."
+  },
+  "competences": {
+    "comprehension_orale": {
+      "code": "CO",
+      "descripteur": "Comprendre un long discours même lorsqu'il n'est pas clairement structuré, comprendre les émissions de télévision et les films sans trop d'effort.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1+"
+    },
+    "comprehension_ecrite": {
+      "code": "CE",
+      "descripteur": "Comprendre des textes factuels ou littéraires longs et complexes, en apprécier les différences de style, comprendre des articles spécialisés.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1+"
+    },
+    "expression_orale": {
+      "code": "EO",
+      "descripteur": "Faire une présentation développée, méthodique, avec une argumentation claire, s'écarter spontanément d'un texte préparé et suivre les relances.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1+"
+    },
+    "expression_ecrite": {
+      "code": "EE",
+      "descripteur": "Écrire des textes clairs et détaillés, un essai argumentatif, une critique, un compte rendu professionnel avec prise de position.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1+"
+    },
+    "interaction": {
+      "code": "IO",
+      "descripteur": "Participer activement à une discussion formelle ou informelle, négocier, argumenter avec conviction, réagir aux arguments d'autrui.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1+"
+    },
+    "mediation": {
+      "code": "MED",
+      "descripteur": "Résumer, synthétiser et transmettre de manière fiable des informations et arguments issus de sources multiples, adapter le discours au contexte.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1"
+    }
+  },
+  "grammaire": [
+    "Subjunctive (I suggest that he go…, if I were…)",
+    "Inversion stylistique (Not only… but also, Hardly had… when)",
+    "Modaux épistémiques et déontiques approfondis (shall, ought to, need, dare)",
+    "Structures participiales (Having done…, Being asked…)",
+    "Nominalisation et style formel",
+    "Ellipse et substitution (so do I, neither can they)",
+    "Discours indirect complexe (reporting verbs variés : urged, insisted, denied + -ing)",
+    "Connecteurs et articulation du discours complexe (notwithstanding, henceforth, thereby)",
+    "Phrases clivées et pseudo-clivées avancées",
+    "Mixed conditionals (If I had studied / I would be…)",
+    "Relatives réduites et appositions",
+    "Aspect accompli et ses nuances (have been doing vs have done vs did)"
+  ],
+  "vocabulaire_thematique": {
+    "axe_1_espace_prive_et_public": ["privacy", "surveillance", "whistleblower", "data breach", "boundaries", "public sphere", "exposure", "anonymity", "transparency", "intimate"],
+    "axe_2_territoire_et_memoire": ["territory", "border", "indigenous", "reconciliation", "reparations", "memorial", "displacement", "sovereignty", "heritage", "landmark"],
+    "axe_3_fictions_et_realites": ["dystopia", "fake news", "post-truth", "narrative", "fiction", "virtual reality", "metaverse", "biopic", "unreliable narrator", "blurred lines"],
+    "axe_4_enjeux_communication": ["rhetoric", "persuasion", "misinformation", "media literacy", "spin", "propaganda", "influence", "framing", "bias", "discourse"],
+    "axe_5_citoyennete_et_virtuel": ["hacktivism", "cyberbullying", "digital citizenship", "cryptocurrency", "moderation", "algorithm", "avatar", "e-democracy", "troll", "encryption"],
+    "axe_6_royaume_uni_et_nations": ["devolution", "Brexit", "Commonwealth", "monarchy", "Scottish independence", "Northern Ireland", "Good Friday Agreement", "Wales", "unionism", "sovereignty"]
+  }
+}

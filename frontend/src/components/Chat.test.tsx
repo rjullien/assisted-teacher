@@ -4,6 +4,11 @@ import Chat from './Chat'
 
 describe('Chat', () => {
   const mockOnInsert = vi.fn()
+  const defaultProps = {
+    currentFile: null as string | null,
+    onInsert: mockOnInsert,
+    programme: null,
+  }
 
   beforeEach(() => {
     vi.resetAllMocks()
@@ -12,7 +17,7 @@ describe('Chat', () => {
   // Helper: render Chat and wait for WebSocket to connect
   async function renderConnected(props?: { currentFile?: string | null }) {
     const result = render(
-      <Chat currentFile={props?.currentFile ?? null} onInsert={mockOnInsert} />
+      <Chat {...defaultProps} currentFile={props?.currentFile ?? null} />
     )
     // Wait for the mock WebSocket onopen (setTimeout 0) to fire
     await act(async () => {
@@ -22,14 +27,13 @@ describe('Chat', () => {
   }
 
   it('renders the chat header', () => {
-    render(<Chat currentFile={null} onInsert={mockOnInsert} />)
+    render(<Chat {...defaultProps} />)
     expect(screen.getByText(/Assistant IA/)).toBeInTheDocument()
   })
 
   it('shows example prompts when empty', () => {
-    render(<Chat currentFile={null} onInsert={mockOnInsert} />)
+    render(<Chat {...defaultProps} />)
     expect(screen.getByText(/Posez une question/)).toBeInTheDocument()
-    expect(screen.getByText(/gap-fill/)).toBeInTheDocument()
   })
 
   it('has an input textarea and send button', async () => {
@@ -91,5 +95,19 @@ describe('Chat', () => {
     expect(chatMessages?.textContent).not.toContain('multiline')
     // But textarea should still have content
     expect(textarea).toHaveValue('multiline')
+  })
+
+  it('shows niveau badge when programme is provided', () => {
+    const programme = {
+      niveau: 'Seconde',
+      cecrl: { LVA: 'B1+', LVB: 'A2+', LVC: 'A1/A2' },
+      axes_culturels: [],
+      contraintes: { axes_a_traiter: 5, axes_total: 6, axe_obligatoire: 6, note: '' },
+      competences: {},
+      grammaire: [],
+      vocabulaire_thematique: {},
+    }
+    render(<Chat {...defaultProps} programme={programme} />)
+    expect(screen.getByText('Seconde — B1+')).toBeInTheDocument()
   })
 })

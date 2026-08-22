@@ -346,3 +346,45 @@ body {
 .split-view-view {
   overflow: hidden !important;
 }
+
+
+/* Niveau selector in toolbar */
+.toolbar-niveau {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.toolbar-niveau label {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.toolbar-niveau select {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.toolbar-niveau select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Chat niveau badge */
+.chat-niveau-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--accent-light);
+  color: var(--accent);
+  border-radius: 10px;
+}
