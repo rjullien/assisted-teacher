@@ -118,7 +118,12 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
   const handleRename = async (node: FileNode) => {
     const currentName = node.name.replace(/\.md$/i, '')
     const raw = prompt('Nouveau nom :', currentName)
-    if (!raw || raw.trim() === currentName) return
+    if (!raw) return
+    // If user didn't change anything
+    if (raw.trim() === currentName) {
+      showToast('Nom inchangé.', 'success')
+      return
+    }
     const sanitized = sanitizeFilename(raw.replace(/\.md$/i, ''))
     if (!sanitized) {
       showToast('Nom invalide après nettoyage.')
@@ -129,6 +134,11 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
     // Compute new path (same directory)
     const dir = node.path.includes('/') ? node.path.substring(0, node.path.lastIndexOf('/') + 1) : ''
     const newPath = dir + newName
+    // Don't rename to same path
+    if (newPath === node.path) {
+      showToast('Le nom est déjà le même.', 'success')
+      return
+    }
     const res = await postJSON('/api/files/rename', { from: node.path, to: newPath })
     if (res.authExpired) {
       handleAuthExpired()
