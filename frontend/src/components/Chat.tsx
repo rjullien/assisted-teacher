@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 
 interface ChatMessage {
@@ -6,6 +6,15 @@ interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   isStreaming?: boolean
+}
+
+interface StreamEvent {
+  seq: number
+  type: string // delta | done | error | meta
+  text?: string
+  reply?: string
+  error?: string
+  jobId?: string
 }
 
 interface ChatProps {
@@ -19,39 +28,117 @@ export default function Chat({ currentFile, onInsert }: ChatProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [ws, setWs] = useState<WebSocket | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const messageIdCounter = useRef(0)
+  const currentJobId = useRef<string | null>(null)
 
-  // Connect to ACP WebSocket
+  const handleStreamEvent = useCallback((ev: StreamEvent) => {
+    switch (ev.type) {
+      case 'meta':
+        // Job started — store jobId for potential reconnect
+        currentJobId.current = ev.jobId || null
+        break
+
+      case 'delta':
+        // Streaming text chunk — append to current assistant message
+        if (ev.text) {
+          setMessages((prev) => {
+            const last = prev[prev.length - 1]
+            if (last && last.role === 'assistant' && last.isStreaming) {
+              return [
+                ...prev.slice(0, -1),
+                { ...last, content: last.content + ev.text },
+              ]
+            }
+            return [
+              ...prev,
+              {
+                id: `msg-${Date.now()}`,
+                role: 'assistant',
+                content: ev.text!,
+                isStreaming: true,
+              },
+            ]
+          })
+        }
+        break
+
+      case 'done':
+        // Stream finished — finalize the assistant message
+        setMessages((prev) => {
+          const last = prev[prev.length - 1]
+          if (last && last.role === 'assistant' && last.isStreaming) {
+            return [
+              ...prev.slice(0, -1),
+              {
+                ...last,
+                content: ev.reply || last.content,
+                isStreaming: false,
+              },
+            ]
+          }
+          // If no streaming message exists yet, create a final one
+          if (ev.reply) {
+            return [
+              ...prev,
+              {
+                id: `msg-${Date.now()}`,
+                role: 'assistant',
+                content: ev.reply,
+                isStreaming: false,
+              },
+            ]
+          }
+          return prev
+        })
+        setIsLoading(false)
+        currentJobId.current = null
+        break
+
+      case 'error':
+        // Error from backend
+        setMessages((prev) => {
+          const last = prev[prev.length - 1]
+          if (last && last.role === 'assistant' && last.isStreaming) {
+            return [
+              ...prev.slice(0, -1),
+              {
+                ...last,
+                content: `⚠️ Erreur : ${ev.error || 'erreur inconnue'}`,
+                isStreaming: false,
+              },
+            ]
+          }
+          return [
+            ...prev,
+            {
+              id: `msg-${Date.now()}`,
+              role: 'assistant',
+              content: `⚠️ Erreur : ${ev.error || 'erreur inconnue'}`,
+              isStreaming: false,
+            },
+          ]
+        })
+        setIsLoading(false)
+        currentJobId.current = null
+        break
+    }
+  }, [])
+
+  // Connect to backend WebSocket
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const wsUrl = `${protocol}//${window.location.host}/ws/acp`
     const socket = new WebSocket(wsUrl)
 
     socket.onopen = () => {
-      console.log('ACP WebSocket connected')
-      // Send initialize request
-      const initMsg = {
-        jsonrpc: '2.0',
-        id: nextId(),
-        method: 'initialize',
-        params: {
-          protocolVersion: '1',
-          capabilities: {},
-          clientInfo: {
-            name: 'cours-ia',
-            version: '0.1.0',
-          },
-        },
-      }
-      socket.send(JSON.stringify(initMsg))
+      console.log('WebSocket connected')
     }
 
     socket.onmessage = (event) => {
       try {
-        const msg = JSON.parse(event.data)
-        handleACPMessage(msg)
+        const ev: StreamEvent = JSON.parse(event.data)
+        handleStreamEvent(ev)
       } catch (e) {
-        console.error('Failed to parse ACP message:', e)
+        console.error('Failed to parse message:', e)
       }
     }
 
@@ -68,82 +155,12 @@ export default function Chat({ currentFile, onInsert }: ChatProps) {
     return () => {
       socket.close()
     }
-  }, [])
+  }, [handleStreamEvent])
 
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
-
-  const nextId = () => {
-    messageIdCounter.current += 1
-    return messageIdCounter.current
-  }
-
-  const handleACPMessage = (msg: Record<string, unknown>) => {
-    // Handle streaming progress notifications
-    if (msg.method === 'notification/progress' || msg.method === 'notifications/progress') {
-      const params = msg.params as Record<string, unknown>
-      const content = (params?.content as string) || (params?.text as string) || ''
-      if (content) {
-        setMessages((prev) => {
-          const last = prev[prev.length - 1]
-          if (last && last.role === 'assistant' && last.isStreaming) {
-            return [
-              ...prev.slice(0, -1),
-              { ...last, content: last.content + content },
-            ]
-          }
-          return [
-            ...prev,
-            {
-              id: `msg-${Date.now()}`,
-              role: 'assistant',
-              content,
-              isStreaming: true,
-            },
-          ]
-        })
-      }
-    }
-
-    // Handle prompt turn result
-    if (msg.result && typeof msg.result === 'object') {
-      const result = msg.result as Record<string, unknown>
-      if (result.text || result.content) {
-        const text = (result.text || result.content) as string
-        setMessages((prev) => {
-          const last = prev[prev.length - 1]
-          if (last && last.role === 'assistant' && last.isStreaming) {
-            return [
-              ...prev.slice(0, -1),
-              { ...last, content: text || last.content, isStreaming: false },
-            ]
-          }
-          return [
-            ...prev,
-            {
-              id: `msg-${Date.now()}`,
-              role: 'assistant',
-              content: text,
-              isStreaming: false,
-            },
-          ]
-        })
-        setIsLoading(false)
-      }
-    }
-
-    // Handle permission requests (auto-accept for MVP0)
-    if (msg.method === 'client/requestPermission') {
-      const response = {
-        jsonrpc: '2.0',
-        id: msg.id,
-        result: { granted: true },
-      }
-      ws?.send(JSON.stringify(response))
-    }
-  }
 
   const handleSend = () => {
     if (!input.trim() || !ws || ws.readyState !== WebSocket.OPEN) return
@@ -157,24 +174,18 @@ export default function Chat({ currentFile, onInsert }: ChatProps) {
     setIsLoading(true)
 
     // Build context with current file info
-    let prompt = input.trim()
+    let content = input.trim()
     if (currentFile) {
-      prompt = `[Contexte: je travaille sur le fichier "${currentFile}"]\n\n${prompt}`
+      content = `[Contexte: je travaille sur le fichier "${currentFile}"]\n\n${content}`
     }
 
-    // Send ACP prompt/start
-    const acpMsg = {
-      jsonrpc: '2.0',
-      id: nextId(),
-      method: 'prompt/start',
-      params: {
-        message: {
-          role: 'user',
-          content: prompt,
-        },
-      },
+    // Send message in the format the backend expects
+    const msg = {
+      type: 'prompt',
+      content,
+      system: 'Tu es un assistant pédagogique spécialisé dans la création de cours et exercices. Réponds en français sauf si on te demande du contenu en anglais.',
     }
-    ws.send(JSON.stringify(acpMsg))
+    ws.send(JSON.stringify(msg))
     setInput('')
   }
 
