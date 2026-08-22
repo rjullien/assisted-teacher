@@ -6,6 +6,12 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Docker platforms (e.g. linux/amd64,linux/arm64)"
+        default: "linux/amd64"
+        required: false
 
 env:
   REGISTRY: ghcr.io
@@ -87,7 +93,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ inputs.platforms || 'linux/amd64' }}
 
   build-frontend:
     needs: [test-frontend]
@@ -129,4 +135,4 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ inputs.platforms || 'linux/amd64' }}
