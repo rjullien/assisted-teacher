@@ -33,6 +33,12 @@ function sanitizeFilename(raw: string): string {
 export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreeProps) {
   const [tree, setTree] = useState<FileNode[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' } | null>(null)
+
+  const showToast = (message: string, type: 'error' | 'success' = 'error') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 4000)
+  }
 
   const loadTree = async () => {
     const res = await getJSON<FileNode[]>('/api/files')
@@ -62,9 +68,12 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
     // Sanitize: remove .md if user typed it, sanitize the name, then add .md
     const withoutExt = raw.replace(/\.md$/i, '')
     const sanitized = sanitizeFilename(withoutExt)
-    if (!sanitized) return
+    if (!sanitized) {
+      showToast('Nom invalide après nettoyage.')
+      return
+    }
     const path = sanitized + '.md'
-    // Use the sanitized name (without underscores) as the heading
+    // Use the original name (trimmed) as the heading
     const heading = withoutExt.trim()
     const res = await putText(
       `/api/file?path=${encodeURIComponent(path)}`,
@@ -74,12 +83,13 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
       handleAuthExpired()
       return
     }
-    if (res.ok) {
-      await loadTree()
-      // Auto-select the new file
-      setActivePath(path)
-      onSelect(path)
+    if (!res.ok) {
+      showToast(`Création échouée : ${res.error || 'erreur inconnue'}`)
+      return
     }
+    await loadTree()
+    setActivePath(path)
+    onSelect(path)
   }
 
   const handleDelete = async (node: FileNode) => {
@@ -92,38 +102,59 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
       handleAuthExpired()
       return
     }
-    if (res.ok) {
-      // If deleted file was active, clear selection
-      if (activePath === node.path) {
-        setActivePath(null)
-        onRefresh()
-      }
-      await loadTree()
+    if (!res.ok) {
+      showToast(`Suppression échouée : ${res.error || 'erreur inconnue'}`)
+      return
     }
+    // Success
+    showToast(`"${node.name}" supprimé`, 'success')
+    if (activePath === node.path) {
+      setActivePath(null)
+    }
+    onRefresh()
+    await loadTree()
   }
 
   const handleRename = async (node: FileNode) => {
     const currentName = node.name.replace(/\.md$/i, '')
     const raw = prompt('Nouveau nom :', currentName)
-    if (!raw || raw.trim() === currentName) return
+    if (!raw) return
+    // If user didn't change anything
+    if (raw.trim() === currentName) {
+      showToast('Nom inchangé.', 'success')
+      return
+    }
     const sanitized = sanitizeFilename(raw.replace(/\.md$/i, ''))
-    if (!sanitized) return
+    if (!sanitized) {
+      showToast('Nom invalide après nettoyage.')
+      return
+    }
     const ext = node.name.endsWith('.md') ? '.md' : ''
     const newName = sanitized + ext
     // Compute new path (same directory)
     const dir = node.path.includes('/') ? node.path.substring(0, node.path.lastIndexOf('/') + 1) : ''
     const newPath = dir + newName
+    // Don't rename to same path
+    if (newPath === node.path) {
+      showToast('Le nom est déjà le même.', 'success')
+      return
+    }
     const res = await postJSON('/api/files/rename', { from: node.path, to: newPath })
     if (res.authExpired) {
       handleAuthExpired()
       return
     }
-    if (res.ok) {
-      if (activePath === node.path) {
-        setActivePath(newPath)
-      }
-      await loadTree()
+    if (!res.ok) {
+      showToast(`Renommage échoué : ${res.error || 'erreur inconnue'}`)
+      return
     }
+    // Success
+    showToast(`Renommé → "${newName}"`, 'success')
+    if (activePath === node.path) {
+      setActivePath(newPath)
+    }
+    onRefresh()
+    await loadTree()
   }
 
   return (
@@ -132,21 +163,38 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
         <h2>Mes cours</h2>
         <button onClick={handleNewFile} title="Nouveau cours">+ Nouveau</button>
       </div>
+
+      {/* Toast notification */}
+      {toast && (
+        <div
+          className={`file-tree-toast ${toast.type}`}
+          onClick={() => setToast(null)}
+        >
+          {toast.type === 'error' ? '❌ ' : '✅ '}
+          {toast.message}
+        </div>
+      )}
+
       {tree.length === 0 && (
         <div style={{ padding: '8px', fontSize: '12px', color: 'var(--text-muted)' }}>
           Aucun cours. Cliquez sur "+ Nouveau".
         </div>
       )}
-      {tree.map((node) => (
-        <TreeNode
-          key={node.path}
-          node={node}
-          activePath={activePath}
-          onSelect={handleSelect}
-          onDelete={handleDelete}
-          onRename={handleRename}
-        />
-      ))}
+      <div className="file-tree-list">
+        {tree.map((node) => (
+          <TreeNode
+            key={node.path}
+            node={node}
+            activePath={activePath}
+            onSelect={handleSelect}
+            onDelete={handleDelete}
+            onRename={handleRename}
+          />
+        ))}
+      </div>
+      <div className="file-tree-version" title={__APP_VERSION__}>
+        {__APP_VERSION__.slice(0, 7)}
+      </div>
     </div>
   )
 }

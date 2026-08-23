@@ -176,6 +176,7 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
       case 'error':
         // Error from backend — check if auth-related
         const errMsg = ev.error || 'erreur inconnue'
+        const detail = ev.detail ? `\n\n\`${ev.detail}\`` : ''
         if (/auth|session|expir/i.test(errMsg)) {
           setAuthError(true)
           if (!handleAuthExpired()) {
@@ -193,12 +194,13 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
         } else {
           setMessages((prev) => {
             const last = prev[prev.length - 1]
+            const errorContent = `⚠️ **Erreur** : ${errMsg}${detail}`
             if (last && last.role === 'assistant' && last.isStreaming) {
               return [
                 ...prev.slice(0, -1),
                 {
                   ...last,
-                  content: `⚠️ Erreur : ${errMsg}`,
+                  content: errorContent,
                   isStreaming: false,
                 },
               ]
@@ -208,7 +210,7 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
               {
                 id: `msg-${Date.now()}`,
                 role: 'assistant',
-                content: `⚠️ Erreur : ${errMsg}`,
+                content: errorContent,
                 isStreaming: false,
               },
             ]

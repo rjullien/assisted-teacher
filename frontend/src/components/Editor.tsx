@@ -1,49 +1,65 @@
-import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
-import { Crepe } from '@milkdown/crepe'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
+import { useAutoSave, type SaveStatus } from '../hooks/useAutoSave'
 
 interface EditorProps {
   content: string
+  lastSavedContent: string
   onChange: (content: string) => void
-  onSave: (content: string) => void
+  onSave: (content: string) => Promise<void>
+  onFlushRef?: React.MutableRefObject<(() => Promise<void>) | null>
   filePath: string | null
 }
 
-// Inner editor component that uses Milkdown
-function MilkdownEditor({ content, onChange, onSave }: Omit<EditorProps, 'filePath'>) {
-  const contentRef = useRef(content)
-  contentRef.current = content
+function SaveIndicator({ status }: { status: SaveStatus }) {
+  if (status === 'idle') return null
 
-  const { get } = useEditor((root) => {
-    // Use Crepe for a batteries-included WYSIWYG Markdown experience
-    const crepe = new Crepe({
-      root,
-      defaultValue: content,
-    })
-    crepe.on((listener) => {
-      listener.markdownUpdated((_ctx, markdown) => {
-        onChange(markdown)
-      })
-    })
-    return crepe
-  })
+  const config: Record<SaveStatus, { icon: string; text: string; className: string }> = {
+    idle: { icon: '', text: '', className: '' },
+    unsaved: { icon: '●', text: 'Non sauvegardé', className: 'save-indicator unsaved' },
+    saving: { icon: '⏳', text: 'Sauvegarde…', className: 'save-indicator saving' },
+    saved: { icon: '✓', text: 'Sauvegardé', className: 'save-indicator saved' },
+    error: { icon: '⚠️', text: 'Erreur de sauvegarde', className: 'save-indicator error' },
+  }
 
-  // Save on Ctrl/Cmd+S
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault()
-        onSave(contentRef.current)
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [onSave, get])
+  const { icon, text, className } = config[status]
 
-  return <Milkdown />
+  return (
+    <span className={className}>
+      {icon} {text}
+    </span>
+  )
 }
 
-export default function Editor({ content, onChange, onSave, filePath }: EditorProps) {
+export default function Editor({ content, lastSavedContent, onChange, onSave, onFlushRef, filePath }: EditorProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const { status, flush } = useAutoSave(content, lastSavedContent, onSave)
+
+  // Expose flush to parent for use before file switching
+  useEffect(() => {
+    if (onFlushRef) {
+      onFlushRef.current = flush
+    }
+    return () => {
+      if (onFlushRef) {
+        onFlushRef.current = null
+      }
+    }
+  }, [flush, onFlushRef])
+
+  // Auto-resize textarea
+  const autoResize = useCallback(() => {
+    const ta = textareaRef.current
+    if (ta) {
+      ta.style.height = 'auto'
+      ta.style.height = ta.scrollHeight + 'px'
+    }
+  }, [])
+
+  useEffect(() => {
+    autoResize()
+  }, [content, autoResize])
+
   if (!filePath) {
     return (
       <div className="editor-panel">
@@ -58,13 +74,20 @@ export default function Editor({ content, onChange, onSave, filePath }: EditorPr
     <div className="editor-panel">
       <div className="editor-header">
         <span>{filePath}</span>
-        <span style={{ fontSize: '11px' }}>Ctrl+S pour sauvegarder</span>
+        <SaveIndicator status={status} />
       </div>
       <div className="editor-content">
-        {/* key forces remount when file changes so Milkdown reloads content */}
-        <MilkdownProvider key={filePath}>
-          <MilkdownEditor content={content} onChange={onChange} onSave={onSave} />
-        </MilkdownProvider>
+        <textarea
+          ref={textareaRef}
+          className="editor-textarea"
+          value={content}
+          onChange={(e) => {
+            onChange(e.target.value)
+            autoResize()
+          }}
+          spellCheck
+          placeholder="Écrivez en Markdown..."
+        />
       </div>
     </div>
   )

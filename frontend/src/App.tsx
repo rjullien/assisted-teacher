@@ -1,6 +1,6 @@
 import { Allotment } from 'allotment'
 import 'allotment/dist/style.css'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import FileTree from './components/FileTree'
 import Editor from './components/Editor'
 import Chat from './components/Chat'
@@ -56,9 +56,11 @@ function saveNiveau(niveau: Niveau) {
 export default function App() {
   const [currentFile, setCurrentFile] = useState<string | null>(null)
   const [fileContent, setFileContent] = useState<string>('')
+  const [lastSavedContent, setLastSavedContent] = useState<string>('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [niveau, setNiveau] = useState<Niveau>(loadNiveau)
   const [programme, setProgramme] = useState<ProgrammeData | null>(null)
+  const flushRef = useRef<(() => Promise<void>) | null>(null)
 
   // Fetch programme data when niveau changes
   useEffect(() => {
@@ -78,7 +80,24 @@ export default function App() {
     saveNiveau(n)
   }, [])
 
+  const handleSave = useCallback(async (content: string) => {
+    if (!currentFile) return
+    const res = await putText(`/api/file?path=${encodeURIComponent(currentFile)}`, content)
+    if (res.authExpired) {
+      handleAuthExpired()
+      return
+    }
+    if (res.ok) {
+      setLastSavedContent(content)
+    }
+  }, [currentFile])
+
   const handleFileSelect = async (path: string) => {
+    // Flush any pending auto-save before switching files
+    if (flushRef.current) {
+      await flushRef.current()
+    }
+
     const res = await getText(`/api/file?path=${encodeURIComponent(path)}`)
     if (res.authExpired) {
       handleAuthExpired()
@@ -87,18 +106,7 @@ export default function App() {
     if (res.ok && res.data !== null) {
       setCurrentFile(path)
       setFileContent(res.data)
-    }
-  }
-
-  const handleSave = async (content: string) => {
-    if (!currentFile) return
-    const res = await putText(`/api/file?path=${encodeURIComponent(currentFile)}`, content)
-    if (res.authExpired) {
-      handleAuthExpired()
-      return
-    }
-    if (res.ok) {
-      setFileContent(content)
+      setLastSavedContent(res.data)
     }
   }
 
@@ -106,11 +114,15 @@ export default function App() {
     // Append AI-generated content to the current editor content
     const newContent = fileContent ? fileContent + '\n\n' + text : text
     setFileContent(newContent)
-    handleSave(newContent)
+    // The auto-save will pick up the change automatically
   }
 
   const handleExport = async (format: 'pdf' | 'docx') => {
     if (!currentFile) return
+    // Flush before exporting to ensure latest content is saved
+    if (flushRef.current) {
+      await flushRef.current()
+    }
     const res = await postBlob(`/api/export/${format}`, { path: currentFile })
     if (res.authExpired) {
       handleAuthExpired()
@@ -149,8 +161,10 @@ export default function App() {
           <Allotment.Pane preferredSize="50%">
             <Editor
               content={fileContent}
+              lastSavedContent={lastSavedContent}
               onChange={setFileContent}
               onSave={handleSave}
+              onFlushRef={flushRef}
               filePath={currentFile}
             />
           </Allotment.Pane>
