@@ -83,5 +83,14 @@
     "editor": "Editor",
     "ia": "AI",
     "programme": "Curriculum"
+  },
+  "lya": {
+    "title": "💬 Lya",
+    "emptyHint": "Chat with Lya — your AI companion. Ask anything!",
+    "placeholder": "Write to Lya..."
+  },
+  "mode": {
+    "desk": "Desk",
+    "lya": "Lya"
   }
 }

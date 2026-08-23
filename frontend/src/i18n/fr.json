@@ -67,9 +67,9 @@
   },
   "programme": {
     "title": "Programme officiel",
-    "loading": "Chargement du programme…",
     "loadError": "Impossible de charger le programme. Vérifie ta connexion.",
     "retry": "Réessayer",
+    "loading": "Chargement du programme…",
     "header": "📋 Programme — {niveau}",
     "axes": "Axes culturels ({count}/{total} à traiter)",
     "axesNote": "{note}",
@@ -83,5 +83,14 @@
     "editor": "Éditeur",
     "ia": "IA",
     "programme": "Programme"
+  },
+  "lya": {
+    "title": "💬 Lya",
+    "emptyHint": "Discute avec Lya — ton compagnon IA. Pose n'importe quelle question !",
+    "placeholder": "Écris à Lya..."
+  },
+  "mode": {
+    "desk": "Desk",
+    "lya": "Lya"
   }
 }

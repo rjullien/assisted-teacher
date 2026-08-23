@@ -1298,3 +1298,257 @@ body {
 .app--mobile .toolbar button[title="Export DOCX"] {
   display: none;
 }
+
+
+
+/* ============================================
+   MODE SWITCHER (Desk / Lya)
+   ============================================ */
+
+.toolbar-mode-switcher {
+  display: flex;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+  padding: 2px;
+  gap: 2px;
+}
+
+.toolbar-mode-btn {
+  padding: 4px 12px;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s;
+}
+
+.toolbar-mode-btn:hover {
+  color: var(--text-primary);
+}
+
+.toolbar-mode-btn.active {
+  background: var(--bg-primary);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.toolbar-lya-title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* ============================================
+   LYA CHAT (full-screen companion mode)
+   ============================================ */
+
+.lya-chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-primary);
+}
+
+.lya-chat-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.lya-chat-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.lya-chat-status {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.lya-chat-status.error {
+  color: var(--danger);
+}
+
+.lya-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.lya-chat-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.lya-chat-empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+.lya-chat-empty p {
+  font-size: 15px;
+  line-height: 1.6;
+  max-width: 400px;
+}
+
+.lya-message {
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.7;
+  max-width: 85%;
+  word-wrap: break-word;
+}
+
+.lya-message.user {
+  background: var(--accent);
+  color: white;
+  align-self: flex-end;
+  border-bottom-right-radius: 4px;
+}
+
+.lya-message.assistant {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+}
+
+.lya-message.assistant p {
+  margin-bottom: 8px;
+}
+
+.lya-message.assistant p:last-child {
+  margin-bottom: 0;
+}
+
+.lya-message-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+.lya-message-actions button {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.lya-message-actions button:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.lya-message-streaming {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.lya-chat-input {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 10px;
+  max-width: 800px;
+  margin: 0 auto;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.lya-chat-input textarea {
+  flex: 1;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 14px;
+  font-family: var(--font-sans);
+  resize: none;
+  min-height: 44px;
+  max-height: 140px;
+  transition: border-color 0.15s;
+}
+
+.lya-chat-input textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.lya-chat-input button {
+  padding: 10px 20px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  align-self: flex-end;
+  transition: background 0.15s;
+}
+
+.lya-chat-input button:hover {
+  background: #3b5bdb;
+}
+
+.lya-chat-input button:disabled {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* Mobile adjustments for Lya */
+.app--mobile .lya-chat-messages {
+  padding: 12px;
+}
+
+.app--mobile .lya-chat-input {
+  padding: 10px 12px;
+}
+
+.app--mobile .lya-chat-input textarea {
+  font-size: 16px; /* prevent iOS zoom */
+  min-height: 40px;
+}
+
+.app--mobile .lya-message {
+  max-width: 90%;
+  font-size: 14px;
+}
+
+/* Mobile mode switcher sizing */
+.app--mobile .toolbar-mode-switcher {
+  flex-shrink: 0;
+}
+
+.app--mobile .toolbar-mode-btn {
+  padding: 5px 14px;
+  font-size: 13px;
+}

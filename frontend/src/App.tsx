@@ -4,9 +4,10 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import FileTree from './components/FileTree'
 import Editor from './components/Editor'
 import Chat from './components/Chat'
+import LyaChat from './components/LyaChat'
 import MobileLayout from './components/MobileLayout'
 import ProgrammeDrawer from './components/ProgrammeDrawer'
-import Toolbar, { type Niveau } from './components/Toolbar'
+import Toolbar, { type Niveau, type AppMode } from './components/Toolbar'
 import { useIsMobile } from './hooks/useIsMobile'
 import { I18nContext, detectLocale, saveLocale, t as tFn, type Locale } from './i18n'
 import { getText, putText, postBlob, getJSON, handleAuthExpired } from './api'
@@ -55,11 +56,26 @@ function saveNiveau(niveau: Niveau) {
   localStorage.setItem(STORAGE_KEY, niveau)
 }
 
+// --- App Mode persistence ---
+
+const MODE_STORAGE_KEY = 'assisted-teacher-mode'
+
+function loadMode(): AppMode {
+  const saved = localStorage.getItem(MODE_STORAGE_KEY)
+  if (saved === 'desk' || saved === 'lya') return saved
+  return 'desk'
+}
+
+function saveMode(mode: AppMode) {
+  localStorage.setItem(MODE_STORAGE_KEY, mode)
+}
+
 // --- App ---
 
 export default function App() {
   const isMobile = useIsMobile()
   const [locale, setLocaleState] = useState<Locale>(detectLocale)
+  const [mode, setModeState] = useState<AppMode>(loadMode)
   const [currentFile, setCurrentFile] = useState<string | null>(null)
   const [fileContent, setFileContent] = useState<string>('')
   const [lastSavedContent, setLastSavedContent] = useState<string>('')
@@ -74,6 +90,11 @@ export default function App() {
   const handleSetLocale = useCallback((l: Locale) => {
     setLocaleState(l)
     saveLocale(l)
+  }, [])
+
+  const handleModeChange = useCallback((m: AppMode) => {
+    setModeState(m)
+    saveMode(m)
   }, [])
 
   const i18nValue = useMemo(() => ({
@@ -171,25 +192,31 @@ export default function App() {
           <Toolbar
             currentFile={currentFile}
             niveau={niveau}
+            mode={mode}
             onNiveauChange={handleNiveauChange}
+            onModeChange={handleModeChange}
             onExportPDF={() => handleExport('pdf')}
             onExportDOCX={() => handleExport('docx')}
           />
-          <MobileLayout
-            currentFile={currentFile}
-            fileContent={fileContent}
-            lastSavedContent={lastSavedContent}
-            refreshKey={refreshKey}
-            programme={programme}
-            programmeError={programmeError}
-            onRetryProgramme={() => fetchProgramme(niveau, locale)}
-            onFileSelect={handleFileSelect}
-            onFileTreeRefresh={handleFileTreeRefresh}
-            onFileContentChange={setFileContent}
-            onSave={handleSave}
-            onFlushRef={flushRef}
-            onInsertFromChat={handleInsertFromChat}
-          />
+          {mode === 'desk' ? (
+            <MobileLayout
+              currentFile={currentFile}
+              fileContent={fileContent}
+              lastSavedContent={lastSavedContent}
+              refreshKey={refreshKey}
+              programme={programme}
+              programmeError={programmeError}
+              onRetryProgramme={() => fetchProgramme(niveau, locale)}
+              onFileSelect={handleFileSelect}
+              onFileTreeRefresh={handleFileTreeRefresh}
+              onFileContentChange={setFileContent}
+              onSave={handleSave}
+              onFlushRef={flushRef}
+              onInsertFromChat={handleInsertFromChat}
+            />
+          ) : (
+            <LyaChat />
+          )}
         </div>
       </I18nContext.Provider>
     )
@@ -201,45 +228,51 @@ export default function App() {
         <Toolbar
           currentFile={currentFile}
           niveau={niveau}
+          mode={mode}
           onNiveauChange={handleNiveauChange}
+          onModeChange={handleModeChange}
           onExportPDF={() => handleExport('pdf')}
           onExportDOCX={() => handleExport('docx')}
           onToggleProgramme={() => setProgrammeDrawerOpen((o) => !o)}
         />
-        <div className="workspace">
-          <Allotment>
-            <Allotment.Pane preferredSize={220} minSize={160} maxSize={400}>
-              <FileTree
-                onSelect={handleFileSelect}
-                onRefresh={handleFileTreeRefresh}
-                refreshKey={refreshKey}
-              />
-            </Allotment.Pane>
-            <Allotment.Pane preferredSize="50%">
-              <Editor
-                content={fileContent}
-                lastSavedContent={lastSavedContent}
-                onChange={setFileContent}
-                onSave={handleSave}
-                onFlushRef={flushRef}
-                filePath={currentFile}
-              />
-            </Allotment.Pane>
-            <Allotment.Pane preferredSize={360} minSize={280}>
-              <Chat
-                currentFile={currentFile}
-                onInsert={handleInsertFromChat}
-                programme={programme}
-              />
-            </Allotment.Pane>
-          </Allotment>
-        </div>
+        {mode === 'desk' ? (
+          <div className="workspace">
+            <Allotment>
+              <Allotment.Pane preferredSize={220} minSize={160} maxSize={400}>
+                <FileTree
+                  onSelect={handleFileSelect}
+                  onRefresh={handleFileTreeRefresh}
+                  refreshKey={refreshKey}
+                />
+              </Allotment.Pane>
+              <Allotment.Pane preferredSize="50%">
+                <Editor
+                  content={fileContent}
+                  lastSavedContent={lastSavedContent}
+                  onChange={setFileContent}
+                  onSave={handleSave}
+                  onFlushRef={flushRef}
+                  filePath={currentFile}
+                />
+              </Allotment.Pane>
+              <Allotment.Pane preferredSize={360} minSize={280}>
+                <Chat
+                  currentFile={currentFile}
+                  onInsert={handleInsertFromChat}
+                  programme={programme}
+                />
+              </Allotment.Pane>
+            </Allotment>
+          </div>
+        ) : (
+          <LyaChat />
+        )}
         <ProgrammeDrawer
           open={programmeDrawerOpen}
           onClose={() => setProgrammeDrawerOpen(false)}
           programme={programme}
           programmeError={programmeError}
-          onRetryProgramme={() => fetchProgramme(niveau)}
+          onRetryProgramme={() => fetchProgramme(niveau, locale)}
         />
       </div>
     </I18nContext.Provider>

@@ -7,17 +7,21 @@ describe('Toolbar', () => {
   const mockExportPDF = vi.fn()
   const mockExportDOCX = vi.fn()
   const mockNiveauChange = vi.fn()
+  const mockModeChange = vi.fn()
   const defaultProps = {
     currentFile: null as string | null,
     niveau: 'seconde' as const,
+    mode: 'desk' as const,
     onNiveauChange: mockNiveauChange,
+    onModeChange: mockModeChange,
     onExportPDF: mockExportPDF,
     onExportDOCX: mockExportDOCX,
   }
 
-  it('renders the app title', () => {
+  it('renders the mode switcher', () => {
     renderWithI18n(<Toolbar {...defaultProps} />)
-    expect(screen.getByText('📚 Assistant Pédagogique')).toBeInTheDocument()
+    expect(screen.getByText('Desk')).toBeInTheDocument()
+    expect(screen.getByText('Lya')).toBeInTheDocument()
   })
 
   it('shows "Aucun fichier" when no file selected', () => {
