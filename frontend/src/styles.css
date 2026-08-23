@@ -116,6 +116,27 @@ body {
   opacity: 0.6;
 }
 
+.file-tree-lya-link {
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+.file-tree-lya-link a {
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+  display: block;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  transition: background 0.15s;
+}
+
+.file-tree-lya-link a:hover {
+  background: var(--accent-light);
+  text-decoration: underline;
+}
+
 .file-tree-header {
   display: flex;
   align-items: center;

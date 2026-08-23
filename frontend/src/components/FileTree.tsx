@@ -216,6 +216,15 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
           />
         ))}
       </div>
+      <div className="file-tree-lya-link">
+        <a
+          href="https://lya-drive.bapttf.com/files/data/cours_esclavage/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          📎 Voir les fichiers de Lya (hack temporaire)
+        </a>
+      </div>
       <div className="file-tree-version" title={__APP_VERSION__}>
         {__APP_VERSION__.slice(0, 7)}
       </div>
