@@ -29,6 +29,8 @@ interface ProgrammeData {
 
 interface ProgrammePanelProps {
   programme: ProgrammeData | null
+  error?: boolean
+  onRetry?: () => void
 }
 
 function Section({ title, icon, defaultOpen = false, children }: {
@@ -55,14 +57,28 @@ function Section({ title, icon, defaultOpen = false, children }: {
   )
 }
 
-export default function ProgrammePanel({ programme }: ProgrammePanelProps) {
+export default function ProgrammePanel({ programme, error, onRetry }: ProgrammePanelProps) {
   const { t } = useI18n()
 
   if (!programme) {
     return (
       <div className="programme-panel">
         <div className="programme-empty">
-          {t('programme.loading')}
+          {error ? (
+            <div className="programme-error">
+              <p>⚠️ {t('programme.loadError')}</p>
+              {onRetry && (
+                <button className="programme-retry-btn" onClick={onRetry}>
+                  🔄 {t('programme.retry')}
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="programme-loading">
+              <span className="programme-spinner">⏳</span>
+              {t('programme.loading')}
+            </div>
+          )}
         </div>
       </div>
     )

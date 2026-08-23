@@ -68,6 +68,8 @@
   "programme": {
     "title": "Official Curriculum",
     "loading": "Loading curriculum…",
+    "loadError": "Failed to load curriculum. Check your connection.",
+    "retry": "Retry",
     "header": "📋 Curriculum — {niveau}",
     "axes": "Cultural axes ({count}/{total} required)",
     "axesNote": "{note}",

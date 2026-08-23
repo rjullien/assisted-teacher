@@ -32,9 +32,11 @@ interface ProgrammeDrawerProps {
   open: boolean
   onClose: () => void
   programme: ProgrammeData | null
+  programmeError?: boolean
+  onRetryProgramme?: () => void
 }
 
-export default function ProgrammeDrawer({ open, onClose, programme }: ProgrammeDrawerProps) {
+export default function ProgrammeDrawer({ open, onClose, programme, programmeError, onRetryProgramme }: ProgrammeDrawerProps) {
   const { t } = useI18n()
   const drawerRef = useRef<HTMLDivElement>(null)
 
@@ -83,7 +85,7 @@ export default function ProgrammeDrawer({ open, onClose, programme }: ProgrammeD
           </button>
         </div>
         <div className="programme-drawer-body">
-          <ProgrammePanel programme={programme} />
+          <ProgrammePanel programme={programme} error={programmeError} onRetry={onRetryProgramme} />
         </div>
       </div>
     </>

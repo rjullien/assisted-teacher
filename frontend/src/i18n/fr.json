@@ -68,6 +68,8 @@
   "programme": {
     "title": "Programme officiel",
     "loading": "Chargement du programme…",
+    "loadError": "Impossible de charger le programme. Vérifie ta connexion.",
+    "retry": "Réessayer",
     "header": "📋 Programme — {niveau}",
     "axes": "Axes culturels ({count}/{total} à traiter)",
     "axesNote": "{note}",
