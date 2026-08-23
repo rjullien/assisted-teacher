@@ -17,7 +17,7 @@
 | D5 | Comment le frontend sait-il quels agents existent ? | **(nouveau)** `GET /api/agents` renvoyant `[{id, label, default}]` | Constante compilée dans le bundle ; sonde de la route WebSocket | EX-3 : l'interface ne doit jamais proposer un agent non configuré, et le bundle peut être en cache pendant des semaines. Seul le serveur connaît son état |
 | D6 | Cycle de vie du processus pi | Un processus par demande, propriété du `Job`, terminé par la fin de la réponse ou par `jobRunTimeout` (10 min) | Processus long-lived avec `--session` / `-c` ; processus propriété de la connexion WebSocket | La promesse détachée existante (« un débranchement du frontend n'annule pas le job ») serait cassée si le processus appartenait à la connexion. Un processus par demande a exactement la durée de vie déjà bornée par `jobRunTimeout` |
 | D7 | Comment Bifrost est-il câblé ? | Provider custom déclaré dans `models.json`, fichier **rendu au démarrage par le backend Go** avec la clé passée par `strings.TrimSpace` | Interpolation `"$BIFROST_API_KEY"` par pi ; forme `"!command"` (gardée en repli) | Les secrets livrés depuis Infisical vers Kubernetes portent régulièrement un `\n` final ; `main.go` et `NewHermesBridge` s'en protègent déjà par `strings.TrimSpace`. L'interpolation de `models.json` ne fait aucun `trim` : le `\n` finirait dans l'en-tête `Authorization: Bearer` |
-| D8 | Portée du sélecteur | Mode **Desk uniquement** (bureau et mobile), pas en mode Lya | Sélecteur global visible aussi en mode Lya | Le mode Lya **est** le compagnon conversationnel : y proposer « pi » reviendrait à comparer deux produits sur le terrain d'un seul. Conséquence mesurée assumée en 7.4 |
+| D8 | Comment le pilote choisit-il ? | **Trois modes de premier niveau** dans le sélecteur existant : `AppMode = 'desk' \| 'pi' \| 'lya'`. Aucun second sélecteur | Sélecteur d'agent imbriqué dans le mode Desk (**version précédente de ce document**) ; sélecteur global visible aussi en mode Lya | Un sélecteur d'agent imbriqué fabrique une matrice 2×2 dont une case est morte (Lya × pi) et un contrôle qui apparaît et disparaît selon le mode. Trois boutons sur une seule ligne rendent la combinaison invalide **irreprésentable** au lieu de devoir l'expliquer, et réutilisent `MODE_STORAGE_KEY`, `loadMode/saveMode`, `toolbar-mode-switcher` et le groupe i18n `mode` tels quels : c'est **moins** de code que la version qu'elle remplace. Détail en 7.1 |
 | D9 | Prompt système pédagogique | MVP : envoyé comme **tour de préambule** par le backend, en réutilisant le champ `system` déjà transmis par `Chat.tsx`. v2 : skill pi monté dans l'image | Skill statique dans l'image dès le MVP ; `--system-prompt` ; `.pi/SYSTEM.md` | `buildSystemPrompt()` dépend du niveau choisi **à l'exécution** (données de `/api/programme`). Un skill statique ne peut pas suivre le niveau sans être régénéré, et un fichier `.pi/SYSTEM.md` posé dans le workspace serait une ressource de projet donc soumise au trust (voir D13) |
 | D10 | Outil `bash` | **Exclu** de la liste d'outils du MVP. Allowlist : `read,write,edit,grep,find,ls` | Inclure `bash` avec des garde-fous applicatifs | Un assistant de rédaction de cours n'a aucun besoin de shell, et `bash` est le seul outil qu'aucune frontière de chemin ne peut contenir. C'est la décision la plus importante du document |
 | D11 | Historique de conversation | Par agent, sans rejeu croisé. Le fil affiché est conservé à l'écran mais n'est pas renvoyé à l'autre agent | Historique partagé et rejoué vers l'agent sélectionné | Le protocole actuel est déjà sans historique : `Chat.tsx` envoie `{type:'prompt', content, system}` et rien d'autre. Partager un historique serait une fonctionnalité nouvelle, non demandée, et rendrait la comparaison du pilote impure |
@@ -171,7 +171,7 @@ Le `ServeMux` de Go 1.22 et suivants accepte sans conflit un motif nu `/ws/agent
 Règles :
 
 - La liste ne contient que les agents **réellement** configurés côté serveur. C'est la seule manière de satisfaire EX-3 durablement, puisqu'un bundle en cache ignore par définition ce que le serveur sait.
-- Si la liste a un seul élément, le frontend **masque** le sélecteur et utilise cet agent.
+- Si la liste a un seul élément, le frontend **ne rend pas** le bouton de mode correspondant à l'agent absent, et ramène à `desk` un mode mémorisé devenu invalide (7.3).
 - Si l'appel échoue (par exemple ancien serveur, nouveau bundle), le frontend retombe sur `lya` et `/ws/acp` : c'est le comportement actuel, donc un échec sûr.
 - Les `label` renvoyés servent de repli ; les libellés affichés viennent des clés i18n (section 7.2), parce que l'interface doit rester traduisible.
 
@@ -183,7 +183,7 @@ Une constante compilée dans le bundle a été écartée : elle serait fausse d�
                     ┌──────────────────────────────────────────┐
                     │  Navigateur (React + Vite)               │
                     │                                          │
-                    │  Toolbar.tsx : sélecteur d'agent         │
+                    │  Toolbar.tsx : 3 modes desk/pi/lya       │
                     │       │                                  │
                     │       ▼                                  │
                     │  App.tsx  agent = 'lya' | 'pi'           │
@@ -364,53 +364,117 @@ Méthode de sondage, à faire pendant l'implémentation et pas avant : un seul �
 
 ---
 
-## 7. 🔀 Décision 7 : le sélecteur et la comparaison du pilote
+## 7. 🔀 Décision 7 : les trois modes et la comparaison du pilote
 
-C'est la pièce centrale du dispositif. Les deux agents restent disponibles **en même temps**, le pilote bascule d'un à l'autre, et c'est l'usage qui révèle le gagnant. Tout le reste du document existe pour rendre cette section possible.
+C'est la pièce centrale du dispositif. Les trois façons de travailler restent disponibles **en même temps**, le pilote passe de l'une à l'autre, et c'est l'usage qui révèle la gagnante. Tout le reste du document existe pour rendre cette section possible.
 
-### 7.1 Où vit le contrôle
+> **Révision** : cette section a été refondue après décision de faire de pi un **troisième mode de premier niveau** (`desk` / `pi` / `lya`) plutôt qu'un sélecteur d'agent imbriqué dans le mode Desk. Les sections 7.1 à 7.4 sont réécrites, 7.5 et 7.7 ajustées ; les sections 1 à 6 et 8 à 10 ne sont pas affectées, la couture `agent` étant conservée et simplement dérivée du mode.
 
-Dans `Toolbar.tsx`, à côté du sélecteur de mode existant et en réutilisant exactement son balisage :
+### 7.1 Où vit le contrôle : un troisième mode, pas un second sélecteur
 
-| Existant | Nouveau, calqué dessus |
-|----------|------------------------|
-| `export type AppMode = 'desk' \| 'lya'` | **(nouveau)** `export type AgentId = 'lya' \| 'pi'` |
-| `div.toolbar-mode-switcher` | **(nouveau)** `div.toolbar-agent-switcher` |
-| `button.toolbar-mode-btn` (x2) | **(nouveau)** `button.toolbar-agent-btn` (x2) |
+**Décision** : pi devient un **mode de premier niveau**, à côté des deux qui existent déjà.
 
-Aucun cadriciel CSS n'est introduit (règle de `AGENTS.md`) : les nouvelles classes reprennent les règles existantes de `styles.css`.
+```ts
+// Toolbar.tsx — avant
+export type AppMode = 'desk' | 'lya'
+// après
+export type AppMode = 'desk' | 'pi' | 'lya'
+```
 
-Le sélecteur est rendu **uniquement** quand `GET /api/agents` renvoie au moins deux entrées, et uniquement en mode Desk. Comme `Toolbar` est rendu à la fois dans la branche mobile et dans la branche bureau de `App.tsx`, le sélecteur est disponible sur mobile sans code supplémentaire : c'est un effet de bord bienvenu, puisqu'une partie de l'usage réel du pilote se fait probablement sur téléphone.
+Ce que sont les trois modes, en une ligne chacun — les deux premiers existent, seul le deuxième est neuf :
 
-Il est **désactivé** pendant qu'une réponse est en cours, exactement comme le bouton d'envoi l'est déjà (`disabled={isLoading || !input.trim() || !connected}` dans `Chat.tsx`). Voir 7.5 pour la raison de fond.
+| Mode | Écran | Agent | Prompt système | Fichiers |
+|------|-------|-------|----------------|----------|
+| `desk` | 3 panneaux : arborescence, éditeur, chat | Hermes/Lya via `/ws/acp` | `buildSystemPrompt(programme)` | L'enseignante écrit ; « 📝 Insérer » pour reprendre une réponse |
+| **`pi`** | **Les mêmes 3 panneaux** | **pi via `/ws/agent/pi`** | **Le même `buildSystemPrompt(programme)`** | **pi lit et écrit le fichier lui-même** |
+| `lya` | Plein écran conversationnel | Hermes/Lya via `/ws/acp` | **aucun** | aucun |
 
-### 7.2 Libellés en langue naturelle
+#### Pourquoi trois modes plutôt qu'un sélecteur d'agent imbriqué
 
-Les libellés ne nomment pas les technologies : le pilote n'a pas à savoir ce qu'est « pi ». Ils nomment ce que fait l'agent. Nouveau groupe de clés **(nouveau)** `agent`, à ajouter dans **les deux** fichiers `frontend/src/i18n/fr.json` et `frontend/src/i18n/en.json`, à côté des 9 groupes existants (`app`, `toolbar`, `fileTree`, `editor`, `chat`, `programme`, `mobile`, `lya`, `mode`). Le français est la langue par défaut (`AGENTS.md`).
+La version précédente de ce document ajoutait un second contrôle (`AgentId`) *à l'intérieur* du mode Desk. Trois raisons de préférer le mode de premier niveau :
+
+1. **La combinaison invalide devient irreprésentable.** Le modèle imbriqué est une matrice 2×2 dont la case Lya × pi n'a pas de sens — la section 7.4 devait l'*expliquer*. Avec trois modes, il n'y a rien à expliquer : l'état n'existe pas. C'est un meilleur automate, pas seulement une meilleure interface.
+2. **Un seul contrôle à apprendre, et il ne bouge pas.** Le modèle imbriqué fait apparaître et disparaître un sélecteur selon le mode courant. Pour une utilisatrice non développeuse, une rangée de trois boutons toujours au même endroit est strictement plus simple qu'un contrôle conditionnel.
+3. **C'est cohérent avec la thèse de la section 7b.** Si Hermes et pi sont bien *deux produits différents et pas deux versions du même*, alors ils appartiennent au niveau où l'application distingue déjà ses produits : le sélecteur de mode. Les enfouir sous un mode revenait à traiter comme un réglage ce que le document affirme être une différence de nature.
+
+#### Ce que cela supprime
+
+Le modèle à trois modes est **moins de code** que celui qu'il remplace. Disparaissent purement et simplement :
+
+| Artefact prévu par la version précédente | Devient |
+|---|---|
+| `export type AgentId = 'lya' \| 'pi'` | supprimé — `AppMode` suffit |
+| `div.toolbar-agent-switcher`, `button.toolbar-agent-btn` | supprimés — `toolbar-mode-switcher` / `toolbar-mode-btn` réutilisés tels quels |
+| `AGENT_STORAGE_KEY`, `loadAgent()`, `saveAgent()`, `handleAgentChange` | supprimés — `MODE_STORAGE_KEY`, `loadMode()`, `saveMode()`, `handleModeChange` étendus d'une valeur |
+| Groupe i18n `agent` (7 clés) | réduit à 2 clés dans le groupe `mode` existant + 3 clés d'indication |
+| Rendu conditionnel du sélecteur selon le mode | supprimé — le sélecteur est toujours celui du mode |
+
+Aucun cadriciel CSS n'est introduit (règle de `AGENTS.md`) : le balisage du sélecteur ne change pas, il gagne un bouton.
+
+#### ⚠️ Le piège d'implémentation : ne pas tripler le layout
+
+`App.tsx` porte **deux** ternaires `mode === 'desk' ? … : …` — un dans la branche mobile (`MobileLayout` contre `LyaChat`) et un dans la branche bureau (le `div.workspace` avec `Allotment` contre `LyaChat`). Ajouter naïvement une troisième branche dupliquerait tout le layout 3 panneaux, `Allotment` compris.
+
+**Le mode pi partage le layout du mode desk ; seul l'agent du panneau de chat change.** La transformation correcte est donc, dans les deux branches :
+
+```ts
+// App.tsx — dérivations à introduire
+const isWorkspace = mode === 'desk' || mode === 'pi'
+const chatAgent: 'lya' | 'pi' = mode === 'pi' ? 'pi' : 'lya'
+```
+
+```ts
+// les deux ternaires : mode === 'desk'  →  isWorkspace
+{isWorkspace ? ( /* layout inchangé */ ) : ( <LyaChat userName={userName} /> )}
+```
+
+et une seule propriété nouvelle transmise au chat : `<Chat agent={chatAgent} … />`, `MobileLayout` la relayant à l'identique.
+
+**La couture `agent` de la version précédente survit donc intacte** — elle est simplement *dérivée du mode* au lieu d'être un second contrôle. C'est ce qui fait que le reste de ce document reste valable sans retouche : routes (D4), protocole RPC (D6), câblage Bifrost (D7), frontière fichiers (D10, D13), emballage (D12) sont inchangés. Seules les sections 7.1 à 7.4 sont révisées.
+
+De la même façon, les contrôles propres au poste de travail dans `Toolbar.tsx` (niveau, programme, fichier courant, exports) sont aujourd'hui sous `{mode === 'desk' && …}` : ils passent sous la même condition `isWorkspace`, puisqu'en mode pi l'enseignante a toujours besoin de choisir son niveau et d'exporter son cours.
+
+#### 🐞 Constat annexe pendant cette révision
+
+Dans la branche bureau, `LyaChat` est appelé **sans** `userName` (`<LyaChat />`), alors que la branche mobile passe bien `<LyaChat userName={userName} />`. Or `LyaChat` n'utilise `userName` que pour préfixer le premier message par `[Je suis …]`. Conséquence : **sur ordinateur, Lya ne sait pas à qui elle parle ; sur téléphone, oui.** Hors périmètre de cette spec, correction d'une ligne, mais à traiter — c'est exactement le genre d'asymétrie qui faussera une comparaison d'agents portant en partie sur la qualité relationnelle.
+
+### 7.2 Libellés
+
+Il y a ici une tension réelle à trancher, et la version précédente de ce document l'avait tranchée dans le vide : elle posait comme principe que « le pilote n'a pas à savoir ce qu'est pi », alors que **les deux modes existants sont déjà étiquetés par des noms techniques** — `mode.desk` vaut littéralement `Desk` et `mode.lya` vaut `Lya`, dans `fr.json` comme dans `en.json`. Ajouter `✍️ Rédiger` à côté de `Desk` et `Lya` produirait une rangée incohérente.
+
+**Décision** : on garde le registre existant, on n'y touche pas, et le troisième bouton s'appelle `Pi`. Deux raisons : ne pas renommer sous les pieds du pilote deux modes qu'elle utilise déjà, et rester dans le vocabulaire employé par le commanditaire (« mode pi », « mode desk », « mode Lya »).
+
+Le sens ne passe donc pas par le libellé du bouton mais par deux porteurs, ajoutés **dans les deux** fichiers `frontend/src/i18n/fr.json` et `frontend/src/i18n/en.json` :
 
 | Clé | fr.json | en.json |
 |-----|---------|---------|
-| `agent.label` | `Assistant` | `Assistant` |
-| `agent.lya` | `💬 Discuter` | `💬 Chat` |
-| `agent.pi` | `✍️ Rédiger` | `✍️ Write` |
-| `agent.lyaHint` | `Répond dans le chat. À toi de copier ce que tu gardes.` | `Answers in the chat. You copy what you keep.` |
-| `agent.piHint` | `Modifie directement le fichier ouvert.` | `Edits the open file directly.` |
-| `agent.piWorking` | `✍️ Modification du fichier en cours...` | `✍️ Editing the file...` |
-| `agent.piUpdated` | `Fichier mis à jour par l'assistant.` | `File updated by the assistant.` |
+| `mode.pi` | `Pi` | `Pi` |
+| `mode.piTitle` *(infobulle du bouton)* | `Pi — modifie directement tes fichiers de cours` | `Pi — edits your course files directly` |
+| `mode.deskTitle` *(infobulle, ajoutée par symétrie)* | `Desk — Lya répond dans le chat, tu insères ce que tu gardes` | `Desk — Lya answers in the chat, you insert what you keep` |
+| `chat.piHint` *(bandeau du panneau de chat en mode pi)* | `Pi modifie directement le fichier ouvert.` | `Pi edits the open file directly.` |
+| `chat.piWorking` | `✍️ Modification du fichier en cours...` | `✍️ Editing the file...` |
+| `chat.piUpdated` | `Fichier mis à jour par Pi.` | `File updated by Pi.` |
 
-La distinction « Discuter » contre « Rédiger » est aussi, en une ligne, la réponse à la question de la section 7b : ce sont deux produits différents, pas deux versions du même.
+Les trois dernières clés vont dans le groupe `chat` existant, pas dans un groupe `agent` nouveau : elles décrivent l'état du panneau de chat, qui est là où l'enseignante les lira.
+
+**Variante si tu préfères la lisibilité à la continuité** : renommer les trois d'un coup en libellés d'usage — `📚 Mes cours` / `✍️ Rédaction` / `💬 Lya`. C'est plus parlant pour une enseignante, mais ça change deux libellés qu'elle connaît déjà, et ça n'est pas ton vocabulaire. À toi de choisir ; le reste du design est identique dans les deux cas.
 
 ### 7.3 Persistance
 
-Calquée sur le mode, dans `App.tsx` :
+**Aucune clé de stockage nouvelle.** Le mode est déjà persisté ; il gagne une valeur admissible. Dans `App.tsx`, une seule ligne change :
 
-| Existant | Nouveau |
-|----------|---------|
-| `const MODE_STORAGE_KEY = 'assisted-teacher-mode'` | **(nouveau)** `const AGENT_STORAGE_KEY = 'assisted-teacher-agent'` |
-| `loadMode()` / `saveMode()`, valeur inconnue ramenée à `'desk'` | **(nouveau)** `loadAgent()` / `saveAgent()`, valeur inconnue ou non annoncée par `/api/agents` ramenée à l'agent par défaut |
-| `handleModeChange` : `setModeState` + `saveMode` | **(nouveau)** `handleAgentChange` : même forme |
+```ts
+// avant
+if (saved === 'desk' || saved === 'lya') return saved
+// après
+if (saved === 'desk' || saved === 'pi' || saved === 'lya') return saved
+```
 
-L'agent est ensuite passé en propriété à `Chat` (`<Chat agent={agent} ... />`), et `Chat.tsx` n'a besoin **que d'une ligne changée** : le chemin en dur de la ligne 237 devient un chemin dérivé de l'agent.
+`MODE_STORAGE_KEY`, `saveMode()`, `handleModeChange` et le repli sur `'desk'` pour toute valeur inconnue sont inchangés. Le repli couvre gratuitement deux cas : un bundle plus ancien qui ne connaît pas `'pi'`, et le cas où pi n'est pas configuré côté serveur (voir ci-dessous).
+
+**Croisement avec `GET /api/agents` (D5)** : si le point d'entrée n'annonce pas pi, le bouton `Pi` n'est pas rendu, et un `'pi'` déjà présent en `localStorage` est ramené à `'desk'` au chargement. C'est ce qui rend EX-13 — retour arrière trivial — vrai sans intervention : on retire la variable d'environnement, le mode disparaît de l'interface et les navigateurs qui l'avaient mémorisé retombent sur Desk.
+
+Le mode est ensuite dérivé en agent (`chatAgent`, voir 7.1) et passé en propriété à `Chat`, et `Chat.tsx` n'a besoin **que d'une ligne changée** : le chemin en dur de la ligne 237 devient un chemin dérivé de l'agent.
 
 ```ts
 // avant (ligne 237)
@@ -423,28 +487,38 @@ const wsUrl = `${protocol}//${window.location.host}${wsPath}`
 
 Tout le reste est inchangé : les options `AuthWebSocket` (`url`, `onMessage`, `onOpen`, `onDisconnect`, `onReconnect`, `maxRetries: 5`, `baseDelay: 1000`), le `subscribe` de reconnexion, la gestion du `jobId`. `LyaChat.tsx` n'est **pas** touché.
 
-### 7.4 Portée : Desk uniquement, et ce que cela veut dire pour la mesure
+### 7.4 Ce que trois modes changent pour la mesure
 
-**Décision** : le sélecteur n'existe qu'en mode Desk. Le mode Lya reste le compagnon conversationnel et continue d'appeler `/ws/acp` en dur.
+Le modèle imbriqué mesurait la préférence entre deux agents *à l'intérieur* du mode Desk, et la section correspondante devait prévenir que l'effondrement éventuel du mode Lya serait un « signal indirect » à ne pas confondre avec la comparaison principale. Cette réserve tombe : **les trois façons de travailler sont désormais sur la même échelle, lisible dans une seule répartition.**
 
-Motif : le mode Lya **est** l'agent Lya. C'est un plein écran de conversation, sans prompt système pédagogique, sans fichier ouvert, sans notion de cours en cours d'édition. Y brancher un agent dont la valeur ajoutée est d'éditer un fichier n'aurait pas de sens et fabriquerait des demandes sans cible.
+Ce que le pilote mesure exactement, et c'est plus riche qu'avant :
 
-**Conséquence assumée sur la mesure**, à ne pas oublier au moment de lire les chiffres : le pilote mesure la préférence entre les deux agents **dans le contexte d'édition de cours**, là où la comparaison a un sens. Il ne mesure pas la préférence entre « discuter avec Lya en plein écran » et « rédiger avec pi ». Si l'usage du mode Lya s'écroule pendant le pilote alors que l'usage Desk-pi monte, c'est un signal, mais un signal indirect qu'il faut interpréter comme tel et pas confondre avec la comparaison principale.
+| Comparaison | Ce qu'elle dit |
+|---|---|
+| `desk` contre `pi` | À agent pédagogique et écran identiques, l'enseignante préfère-t-elle **qu'on lui propose du texte** ou **qu'on modifie son fichier** ? C'est la comparaison principale, et elle est propre : même layout, même `buildSystemPrompt`, même niveau, seul l'agent diffère |
+| `desk` + `pi` contre `lya` | Le compagnon plein écran garde-t-il sa place quand deux modes de travail existent ? |
+| `pi` contre `lya` | Les deux extrêmes de l'échelle d'autonomie : celui qui agit sur les fichiers contre celui qui se souvient et ne touche à rien |
+
+**Les deux modes Hermes restent distinguables** dans la mesure, ce qui compte pour répondre à la question du pilote : `desk` et `lya` appellent tous deux `/ws/acp`, mais la ligne `agent_usage` ne suffit alors plus à les séparer. D'où l'ajustement de la section 7.7 : la ligne de journal porte `agent=lya` **et** `mode=desk|lya`. Sans ce champ, « Hermes est-il overkill ? » resterait sans réponse, puisqu'on ne saurait pas si Hermes est sollicité comme outil de rédaction ou comme compagnon — or c'est précisément la distinction que la section 7b appelle « mal apparié plutôt que surdimensionné ».
+
+**Le biais de nouveauté est plus fort qu'avant** et il faut le dire : un bouton neuf dans une rangée que l'enseignante regarde à chaque session attire mécaniquement plus qu'un sélecteur imbriqué. La lecture des chiffres doit donc écarter la première semaine, comme le prévoit déjà la condition de sortie des exigences.
 
 ### 7.5 Que se passe-t-il à la bascule
 
 | Question | Décision | Motif |
 |----------|----------|-------|
 | Un job en cours est-il annulé ? | **Non, jamais.** Il va jusqu'à son terme ou jusqu'à `jobRunTimeout` | Deux raisons : tuer un pi au milieu d'une écriture peut laisser un fichier tronqué, et la promesse détachée du `Job` interdit qu'un événement d'interface tue un traitement |
-| Peut-on alors basculer pendant un traitement ? | Le contrôle est **désactivé** tant qu'un job est en cours | C'est la façon la plus simple de rendre la question précédente invisible pour un utilisateur non développeur, et elle réutilise le motif de désactivation déjà présent sur le bouton d'envoi |
+| Peut-on alors basculer pendant un traitement ? | **Oui, la bascule reste permise** — révision liée au passage à trois modes. Le job continue, et l'onglet quitté le retrouve au retour grâce à `Subscribe(after)` | Dans le modèle imbriqué, le contrôle ne changeait que l'agent : le désactiver était sans conséquence. Devenu sélecteur de **mode**, il change l'écran entier : interdire de retourner voir ses fichiers ou de poser une question à Lya parce qu'une génération est en cours serait une régression d'usage. Le journal append-only et le rejeu du backlog existent exactement pour ça |
+| Que voit-on en revenant sur un mode dont le job tourne encore ? | Le fil se reconstitue depuis le backlog, streaming compris s'il n'est pas terminé | C'est déjà le comportement du `subscribe` de reconnexion dans `Chat.tsx` : aucun code nouveau, seulement un cas d'usage supplémentaire pour un mécanisme éprouvé |
+| Et le verrou de lecture seule sur le fichier pendant que pi écrit (7.6) ? | Il **tient à travers la bascule** : quitter le mode pi ne déverrouille pas le fichier que pi est en train d'écrire | Sinon la bascule offrirait précisément le moyen de contourner la protection contre les deux auteurs simultanés |
 | L'historique est-il partagé ? | **Non.** Le fil affiché reste à l'écran pour l'enseignant, mais rien n'est rejoué vers l'agent nouvellement sélectionné | Le protocole est déjà sans historique aujourd'hui : `Chat.tsx` envoie `{type:'prompt', content, system}` et rien de plus. Introduire un historique partagé serait une fonctionnalité nouvelle, et elle polluerait la comparaison en donnant à un agent le contexte produit par l'autre |
-| Comment l'utilisateur voit-il la bascule ? | Le fil reçoit un séparateur discret indiquant le nouvel assistant, et l'indication d'aide (`agent.lyaHint` / `agent.piHint`) change | Un non-développeur doit pouvoir répondre à « qui m'a répondu ça ? » en regardant l'écran |
+| Comment l'utilisateur voit-il la bascule ? | Le bouton de mode actif porte déjà la classe `active` ; en mode pi le panneau de chat affiche en plus le bandeau `chat.piHint` | Un non-développeur doit pouvoir répondre à « qui m'a répondu ça ? » en regardant l'écran. Avec trois modes c'est acquis : le mode courant est toujours visible dans la barre d'outils, alors qu'un sélecteur imbriqué pouvait être hors du champ de vision |
 
 ### 7.6 Après une écriture de pi : ce que l'interface fait
 
 Proposer « 📝 Insérer dans le cours » (`chat.insert`) après que l'agent a lui-même écrit dans le fichier dupliquerait le contenu. Donc, sur un `done` provenant de l'agent pi dont le flux contenait au moins un appel d'outil d'écriture :
 
-1. Le bouton d'insertion n'est pas rendu pour ce message ; à sa place, le texte `agent.piUpdated`.
+1. Le bouton d'insertion n'est pas rendu pour ce message ; à sa place, le texte `chat.piUpdated`.
 2. Le contenu du fichier courant est relu depuis le serveur (`getText` de `api.ts` sur `GET /api/file`) et poussé dans l'éditeur.
 3. L'arborescence est rafraîchie en incrémentant `refreshKey` (le mécanisme existe déjà : `App.tsx` porte `refreshKey` et `handleFileTreeRefresh`, `FileTree` refait sa requête quand la valeur change, ce qui est même déjà couvert par un test).
 
@@ -455,7 +529,7 @@ Cela demande deux propriétés optionnelles nouvelles sur `Chat` : **(nouveau)**
 | Règle | Mise en oeuvre |
 |-------|----------------|
 | Avant d'envoyer une demande à pi, les modifications locales en attente sont écrites | `App.tsx` porte déjà `flushRef` et le passe à l'éditeur par `onFlushRef` ; on l'appelle avant l'envoi, comme le fait déjà l'export |
-| Pendant le job pi, l'éditeur n'écrase pas le travail de l'agent | Le fichier visé passe en lecture seule avec l'indication `agent.piWorking`. C'est aussi honnête pour l'utilisateur : deux auteurs simultanés sur un même fichier, c'est un piège, pas une fonctionnalité |
+| Pendant le job pi, l'éditeur n'écrase pas le travail de l'agent | Le fichier visé passe en lecture seule avec l'indication `chat.piWorking`. C'est aussi honnête pour l'utilisateur : deux auteurs simultanés sur un même fichier, c'est un piège, pas une fonctionnalité |
 | Après le job, le disque gagne | Relecture serveur (point 2 ci-dessus) : le contenu à l'écran redevient celui du fichier |
 | Si l'utilisateur avait quand même modifié le texte pendant le job | Cas impossible tant que la lecture seule tient. S'il devient possible (par exemple sur un autre onglet), le disque gagne toujours, et c'est documenté ici comme un choix, pas comme un accident |
 
@@ -464,18 +538,21 @@ Cela demande deux propriétés optionnelles nouvelles sur `Chat` : **(nouveau)**
 Une seule ligne de journal par demande, produite par `log.Printf` comme le reste du backend, donc dans le même flux que les lignes `hermes:` et récupérable par les mêmes moyens (`kubectl logs`, `grep`) :
 
 ```
-agent_usage agent=pi jobId=job-1756988112345678901 promptLen=412 file=B1/unit5.md durationMs=8421 status=done tools=3 toolsUsed=read,edit
+agent_usage agent=pi mode=pi jobId=job-1756988112345678901 promptLen=412 file=B1/unit5.md durationMs=8421 status=done tools=3 toolsUsed=read,edit
 ```
 
 | Champ | Présent pour | Sert à |
 |-------|--------------|--------|
-| `agent` | les deux | La mesure principale : la répartition d'usage |
+| `agent` | les trois | Quel harnais a répondu : `lya` ou `pi` |
+| `mode` | les trois | **Ajouté avec le passage à trois modes.** `desk`, `pi` ou `lya`. Indispensable : `desk` et `lya` appellent tous deux Hermes, et sans ce champ on ne saurait pas si Hermes est sollicité comme outil de rédaction ou comme compagnon — c'est-à-dire qu'on ne pourrait pas répondre à la question du pilote. Le frontend le transmet dans le message `prompt` |
 | `jobId` | les deux | Corréler avec les autres lignes du même échange |
 | `promptLen` | les deux | Distinguer les demandes courtes des demandes élaborées, sans lire le contenu |
 | `file` | les deux | Savoir sur quel type de fichier chaque agent est sollicité (chemin relatif au workspace, pas de contenu) |
 | `durationMs` | les deux | Confort d'usage comparé |
 | `status` | les deux | `done` ou `error` : fiabilité comparée |
 | `tools`, `toolsUsed` | pi seulement | Est-ce que la capacité d'agir sert vraiment, ou est-ce que pi se contente de répondre du texte ? |
+
+**Conséquence sur le protocole, à ne pas laisser implicite** : pour que le backend puisse journaliser `mode`, le message `prompt` le porte. La structure anonyme décodée dans `HandleWebSocket` gagne donc un champ `Mode string \`json:"mode,omitempty"\``, et `/ws/acp` le reçoit aussi. Ce n'est pas une violation d'EX-4 : un champ absent se décode en chaîne vide, traitée comme `desk`, donc un bundle en cache qui ne l'envoie pas continue de fonctionner à l'identique (EX-5). C'est le seul ajout au protocole existant de tout ce document, et il est purement d'observation : aucune décision de routage n'en dépend — le routage se fait par la route, pas par ce champ.
 
 **Contraintes** (NF-5), non négociables : champs techniques et agrégeables uniquement. Pas une ligne de contenu de cours, pas de nom, pas d'adresse de courriel, pas d'identifiant d'utilisateur. `promptLen` est un entier, pas un extrait. `file` est un chemin relatif, ce qui est déjà public dans l'arborescence de l'interface.
 
@@ -485,15 +562,16 @@ agent_usage agent=pi jobId=job-1756988112345678901 promptLen=412 file=B1/unit5.m
 
 ### 7.8 🏁 Verdict du pilote
 
-La question doit avoir une façon définie d'être tranchée, sinon le dispositif ne sert à rien. Trois issues, avec les signaux qui les justifieraient :
+La question doit avoir une façon définie d'être tranchée, sinon le dispositif ne sert à rien. Le passage à trois modes fait apparaître une quatrième issue, et c'est celle que la thèse de la section 7b rend la plus probable : **Hermes conservé mais relégué au compagnon**. Elle était invisible dans le modèle imbriqué, qui ne savait pas distinguer Hermes-outil de Hermes-compagnon.
 
 | Issue | Signaux qui la justifient | Ce qu'on fait alors |
 |-------|---------------------------|---------------------|
-| **Garder les deux** | La répartition d'usage reste équilibrée sur les dernières semaines ; les deux agents sont sollicités sur des demandes de nature différente (par exemple Lya pour explorer et préparer, pi pour écrire) ; le coût de maintien des deux chemins reste faible | On procède à l'extraction du package `agent` prévue en 3.2, puisque la coexistence devient durable |
-| **Abandonner Hermes** | L'usage bascule durablement vers pi et ne revient pas ; le clic « Insérer dans le cours » devient rare ; aucune demande ne nécessite plus la mémoire ni les skills de Hermes ; les incidents d'exploitation côté passerelle Hermes continuent de coûter du temps | On retire le pont Hermes, `HERMES_*`, et `/ws/acp` devient une redirection puis disparaît. Réponse à la question : oui, Hermes était surdimensionné pour cet usage |
-| **Abandonner pi** | pi est peu utilisé après la phase de nouveauté ; ses écritures directes sont plus souvent défaites que gardées ; sa qualité de français ou d'anglais pédagogique est jugée inférieure ; le poids d'image et le confinement ne se justifient pas | On retire pi, l'image backend redevient ce qu'elle est aujourd'hui, et le sélecteur disparaît de lui-même (EX-13). Réponse : non, Hermes n'était pas surdimensionné |
+| **Garder les trois** | La répartition reste équilibrée sur les dernières semaines ; les trois modes sont sollicités sur des demandes de nature différente ; le coût de maintien des deux chemins reste faible | On procède à l'extraction du package `agent` prévue en 3.2, puisque la coexistence devient durable |
+| **Hermes relégué au compagnon** ⬅ *issue rendue visible par les trois modes* | `mode=pi` domine `mode=desk` sur les demandes de rédaction, alors que `mode=lya` garde un usage régulier | Le mode `Desk` est retiré ou basculé sur pi ; Hermes reste, mais uniquement derrière le mode `Lya`. Réponse à la question : Hermes n'était pas surdimensionné, il était **mal apparié** — exactement la thèse de 7b, confirmée par l'usage |
+| **Abandonner Hermes** | L'usage bascule durablement vers pi et ne revient pas ; le clic « Insérer dans le cours » devient rare ; `mode=lya` tombe aussi en désuétude, donc ni la mémoire ni les skills ne servent plus ; les incidents d'exploitation côté passerelle Hermes continuent de coûter du temps | On retire le pont Hermes, `HERMES_*`, et `/ws/acp` devient une redirection puis disparaît. Le mode `Lya` disparaît avec lui — c'est la condition qui rend cette issue distincte de la précédente, et elle doit être vérifiée avant de trancher. Réponse : oui, Hermes était surdimensionné pour cet usage |
+| **Abandonner pi** | pi est peu utilisé après la phase de nouveauté ; ses écritures directes sont plus souvent défaites que gardées ; sa qualité de français ou d'anglais pédagogique est jugée inférieure ; le poids d'image et le confinement ne se justifient pas | On retire pi, l'image backend redevient ce qu'elle est aujourd'hui, et le mode `Pi` disparaît de lui-même (EX-13 et 7.3). Réponse : non, Hermes n'était pas surdimensionné |
 
-Ce document ne préjuge d'aucune de ces trois issues. Il garantit seulement qu'à la fin du pilote, on aura de quoi choisir.
+Ce document ne préjuge d'aucune de ces quatre issues. Il garantit seulement qu'à la fin du pilote, on aura de quoi choisir.
 
 ---
 
@@ -511,7 +589,7 @@ Hermes/Lya n'est pas trop gros pour la tâche : il fait **autre chose** que ce d
 | Chemin vers le cours | Le texte arrive dans le chat ; il n'entre dans le cours que par le bouton « Insérer dans le cours » | Il modifie `B1/unit5.md` sur place |
 | Surface de risque fichier | **Nulle.** Aucun accès au système de fichiers | Réelle, et c'est tout l'objet de la section 8 |
 
-Deux produits différents, donc : un sélecteur, pas une migration. La bonne question n'est pas « lequel est le meilleur agent », c'est « pour écrire des cours, l'enseignant préfère-t-il un interlocuteur ou un exécutant ». Et personne ne peut y répondre à sa place.
+Deux produits différents, donc : trois modes, pas une migration. La bonne question n'est pas « lequel est le meilleur agent », c'est « pour écrire des cours, l'enseignant préfère-t-il un interlocuteur ou un exécutant ». Et personne ne peut y répondre à sa place.
 
 ### 7b.2 Comparaison sur les critères qui comptent pour l'écriture de cours
 
@@ -656,7 +734,7 @@ Nouvelles, toutes lues via l'assistant `envOr()` existant de `main.go`, avec le 
 
 | Drapeau | Variable | Défaut | Rôle |
 |---------|----------|--------|------|
-| `--pi-enabled` | `PI_ENABLED` | `false` | Interrupteur maître. À `false`, ni route ni sélecteur : comportement actuel exact (EX-13) |
+| `--pi-enabled` | `PI_ENABLED` | `false` | Interrupteur maître. À `false`, ni route ni mode `Pi` : comportement actuel exact à deux modes (EX-13) |
 | `--pi-bin` | `PI_BIN` | `pi` | Chemin du binaire, remplacé par un faux binaire dans les tests |
 | `--pi-model` | `PI_MODEL_ID` | vide | Identifiant de modèle déclaré dans `models.json`. **Pas** `PI_MODEL` : ce nom appartient à pi (5.2) |
 | `--pi-tools` | `PI_TOOLS` | `read,write,edit,grep,find,ls` | Liste d'outils autorisés. `bash` volontairement absent (8d) |
@@ -688,7 +766,7 @@ Aucun nouveau job. pi arrive **dans l'image backend existante**, donc les 4 jobs
 ### 9.7 Version et retour arrière
 
 - **Version** : l'implémentation sera un incrément mineur (ajout de fonctionnalité rétrocompatible), à faire dans un commit `release:` conformément à `AGENTS.md`. **Ce document ne bump rien** : `version.json` reste inchangé.
-- **Retour arrière** : ne pas configurer pi. Pas de `PI_ENABLED`, donc pas de route, donc `/api/agents` ne renvoie qu'une entrée, donc pas de sélecteur, donc l'application se comporte **exactement** comme aujourd'hui. C'est une propriété de conception à préserver activement, pas une conséquence heureuse : chaque incrément du plan ci-dessous doit être vérifié aussi dans la configuration « pi absent ».
+- **Retour arrière** : ne pas configurer pi. Pas de `PI_ENABLED`, donc pas de route, donc `/api/agents` ne renvoie qu'une entrée, donc pas de mode `Pi`, donc l'application se comporte **exactement** comme aujourd'hui avec ses deux modes. C'est une propriété de conception à préserver activement, pas une conséquence heureuse : chaque incrément du plan ci-dessous doit être vérifié aussi dans la configuration « pi absent ».
 
 ---
 
@@ -719,11 +797,17 @@ Cinq incréments, chacun livrable et vérifiable seul.
 
 **Preuve** : `docker build` réussit, `pi --version` répond **dans** l'image, la taille avant/après est notée, et le binaire Go démarre toujours sans pi configuré.
 
-### Étape 4 : le sélecteur côté frontend
+### Étape 4 : le troisième mode côté frontend
 
-- `Toolbar.tsx` (sélecteur, masqué si un seul agent), `App.tsx` (persistance), `Chat.tsx` (chemin dérivé de l'agent, relecture du fichier après une écriture), nouveau groupe i18n dans `fr.json` **et** `en.json`.
+Découpée en deux sous-étapes, parce que la première est un remaniement à comportement constant et qu'on veut pouvoir la fusionner seule :
 
-**Preuve** : `Chat.test.tsx` étendu pour vérifier que l'URL WebSocket suit l'agent sélectionné ; `Toolbar.test.tsx` étendu pour vérifier que le sélecteur est absent quand un seul agent est annoncé et présent quand il y en a deux ; un test de la relecture de fichier après un `done` d'un échange qui a modifié le fichier.
+**4a — étendre le mode sans ajouter d'agent.** `AppMode` gagne `'pi'`, `loadMode()` l'accepte, `Toolbar.tsx` affiche le troisième bouton, et `App.tsx` introduit `isWorkspace` et `chatAgent` (7.1) en remplaçant les deux ternaires `mode === 'desk' ?`. À ce stade `chatAgent` vaut toujours `'lya'` : **le mode pi existe, ressemble à Desk et se comporte exactement comme Desk.** Rien ne doit changer visuellement en modes Desk et Lya.
+
+**Preuve 4a** : `Toolbar.test.tsx` étendu — trois boutons rendus, le clic appelle `onModeChange('pi')` ; un test qui vérifie qu'en mode `'pi'` l'arborescence et l'éditeur sont rendus (donc que le layout n'a pas été dupliqué ni perdu) ; vitest global toujours vert sur les 52 tests existants.
+
+**4b — brancher pi.** `chatAgent` devient `mode === 'pi' ? 'pi' : 'lya'`, `Chat.tsx` dérive son chemin WebSocket de la propriété `agent` (la ligne 237), relecture du fichier et rafraîchissement de l'arborescence après une écriture (7.6), clés i18n de 7.2 dans `fr.json` **et** `en.json`, masquage du bouton `Pi` et repli du mode mémorisé si `/api/agents` n'annonce pas pi (7.3).
+
+**Preuve 4b** : `Chat.test.tsx` étendu pour vérifier que l'URL WebSocket suit la propriété `agent` (`/ws/acp` contre `/ws/agent/pi`) ; un test du repli `'pi'` → `'desk'` quand pi n'est pas annoncé ; un test de la relecture de fichier après un `done` dont le flux contenait un appel d'outil d'écriture.
 
 ### Étape 5 : l'instrumentation
 
@@ -850,4 +934,4 @@ Ce qui ne peut pas être décidé depuis le dépôt, et qui doit l'être avant o
 
 ---
 
-*Design : second agent pi + Bifrost. Deux agents, un sélecteur, et une question tranchée par l'usage plutôt que par le raisonnement.*
+*Design : second agent pi + Bifrost. Deux agents, trois modes (`Desk` / `Pi` / `Lya`), et une question tranchée par l'usage plutôt que par le raisonnement.*

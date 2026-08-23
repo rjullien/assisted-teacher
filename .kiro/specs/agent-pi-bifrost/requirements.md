@@ -7,7 +7,7 @@
 
 ## 🎯 Contexte
 
-L'application n'a aujourd'hui qu'un seul chemin d'agent : le pont Hermes/Lya, exposé sur la route WebSocket `/ws/acp` du backend Go et consommé par `Chat.tsx` (mode Desk) et `LyaChat.tsx` (mode Lya). Hermes/Lya est un agent hébergé, autonome, avec mémoire et skills, atteint par un seul appel HTTPS : c'est un très bon compagnon de conversation, mais il ne touche jamais aux fichiers de cours, et tout ce qu'il produit n'arrive dans le cours que si l'enseignant clique sur « 📝 Insérer dans le cours ». La question posée par le pilote est donc légitime : pour écrire des cours d'anglais, un agent hébergé avec mémoire et skills est-il l'outil adapté, ou est-il surdimensionné ? Personne ne peut répondre à cette question par le raisonnement seul. On ajoute donc un **second agent, plus léger et local (pi piloté par le backend, adossé à Bifrost pour le LLM)**, on expose **les deux derrière un sélecteur visible**, et c'est l'usage réel du pilote qui tranche. Ce document décrit ce que le second agent doit faire et comment on saura, à la fin du pilote, lequel des deux garder.
+L'application n'a aujourd'hui qu'un seul chemin d'agent : le pont Hermes/Lya, exposé sur la route WebSocket `/ws/acp` du backend Go et consommé par `Chat.tsx` (mode Desk) et `LyaChat.tsx` (mode Lya). Hermes/Lya est un agent hébergé, autonome, avec mémoire et skills, atteint par un seul appel HTTPS : c'est un très bon compagnon de conversation, mais il ne touche jamais aux fichiers de cours, et tout ce qu'il produit n'arrive dans le cours que si l'enseignant clique sur « 📝 Insérer dans le cours ». La question posée par le pilote est donc légitime : pour écrire des cours d'anglais, un agent hébergé avec mémoire et skills est-il l'outil adapté, ou est-il surdimensionné ? Personne ne peut répondre à cette question par le raisonnement seul. On ajoute donc un **second agent, plus léger et local (pi piloté par le backend, adossé à Bifrost pour le LLM)**, et on l'expose comme un **troisième mode de premier niveau** (`Desk` / `Pi` / `Lya`) dans le sélecteur de mode qui existe déjà, et c'est l'usage réel du pilote qui tranche. Ce document décrit ce que le second agent doit faire et comment on saura, à la fin du pilote, lequel des deux garder.
 
 ---
 
@@ -16,7 +16,7 @@ L'application n'a aujourd'hui qu'un seul chemin d'agent : le pont Hermes/Lya, ex
 | # | Objectif |
 |---|----------|
 | O1 | Ajouter un second agent, `pi` en mode RPC, piloté par le backend Go, dont le LLM est servi par Bifrost |
-| O2 | Rendre les deux agents disponibles **en même temps**, sélectionnables depuis l'interface, sans redémarrage ni fichier de configuration |
+| O2 | Rendre les deux agents disponibles **en même temps** via trois modes sélectionnables depuis l'interface, sans redémarrage ni fichier de configuration |
 | O3 | Ne rien casser : `/ws/acp` et le comportement actuel du chat restent identiques |
 | O4 | Donner à pi la capacité d'agir sur les fichiers de cours, avec une frontière explicite |
 | O5 | Instrumenter l'usage des deux agents pour répondre, mesures en main, à la question « Hermes est-il overkill ? » |
@@ -49,21 +49,25 @@ Un enseignant d'anglais, non développeur, seul utilisateur du produit. Conséqu
 
 Chaque exigence a un critère d'acceptation formulé comme un résultat observable.
 
-### EX-1 : deux agents sélectionnables à l'exécution
+### EX-1 : trois modes sélectionnables à l'exécution
 
-L'enseignant choisit l'agent qui traitera ses demandes depuis l'interface, sans rechargement forcé ni redémarrage du serveur.
+L'enseignante choisit sa façon de travailler depuis le sélecteur de mode existant, sans rechargement forcé ni redémarrage du serveur. Le mode `pi` s'ajoute aux modes `desk` et `lya` **au même niveau** : il n'y a pas de second sélecteur.
 
-**Critère** : en mode Desk, deux boutons de sélection sont visibles ; cliquer sur le second puis envoyer un message produit une réponse issue de pi (visible dans le journal du backend par une ligne `agent=pi`) ; cliquer sur le premier puis envoyer produit une réponse issue de Hermes (`agent=lya`).
+**Critère** : la barre d'outils présente trois boutons, `Desk`, `Pi` et `Lya`. En mode `Pi`, l'écran est le même qu'en mode `Desk` — arborescence, éditeur, chat — et envoyer un message produit une réponse issue de pi, visible dans le journal du backend par une ligne `agent=pi mode=pi`. En mode `Desk`, la même action produit une réponse issue de Hermes, `agent=lya mode=desk`. En mode `Lya`, l'écran plein est inchangé et le journal porte `agent=lya mode=lya`.
 
 ### EX-2 : le choix survit au rechargement
 
-**Critère** : après sélection de pi, rechargement complet de la page (F5), le sélecteur est toujours positionné sur pi et le message suivant part vers pi. Aucun autre réglage de l'utilisateur (niveau, mode Desk/Lya, langue) n'est modifié par l'opération.
+**Critère** : après sélection du mode `Pi`, rechargement complet de la page (F5), le mode `Pi` est toujours actif et le message suivant part vers pi. Aucun autre réglage (niveau, langue) n'est modifié par l'opération. Aucune clé de `localStorage` nouvelle n'est créée : `assisted-teacher-mode` accepte simplement une troisième valeur.
+
+### EX-2b : un mode inconnu ou indisponible retombe sur Desk
+
+**Critère** : si `localStorage` contient `pi` alors que le serveur n'annonce pas pi dans `GET /api/agents`, l'application démarre en mode `Desk` et le bouton `Pi` n'est pas rendu. Même comportement pour toute valeur inconnue. C'est ce qui rend EX-13 vrai sans intervention manuelle sur les navigateurs.
 
 ### EX-3 : le backend annonce les agents réellement disponibles
 
 L'interface ne propose jamais un agent que le serveur n'a pas configuré.
 
-**Critère** : avec seulement la clé Hermes configurée, l'interface n'affiche aucun sélecteur d'agent et se comporte exactement comme la version actuelle. Avec les deux configurés, le sélecteur affiche deux entrées. Avec seulement pi configuré, le sélecteur est masqué et tout part vers pi. Dans les trois cas, aucun appel réseau ne part vers une route non enregistrée.
+**Critère** : avec seulement la clé Hermes configurée, le bouton `Pi` n'est pas rendu et l'interface se comporte exactement comme la version actuelle (deux modes). Avec les deux configurés, trois boutons de mode sont rendus. Avec seulement pi configuré, le mode `Desk` route vers pi et le mode `Lya` est masqué. Dans les trois cas, aucun appel réseau ne part vers une route non enregistrée.
 
 ### EX-4 : `/ws/acp` reste inchangé
 
@@ -107,13 +111,13 @@ Le contexte pédagogique (niveau, données du programme officiel) que `Chat.tsx`
 
 ### EX-12 : l'usage par agent est observable
 
-À la fin du pilote, il doit être possible de dire lequel des deux agents a été réellement utilisé, sur quel type de demandes, et avec quel taux d'échec.
+À la fin du pilote, il doit être possible de dire lequel des trois modes a été réellement utilisé, sur quel type de demandes, et avec quel taux d'échec. Les modes `Desk` et `Lya` appelant tous deux Hermes, la mesure doit les distinguer : la ligne de journal porte donc `agent` **et** `mode`.
 
 **Critère** : pour chaque demande, une ligne de journal structurée du backend permet de compter, par agent : le nombre de demandes, la durée, le statut final, la longueur de la demande, le fichier visé, et pour pi le nombre d'appels d'outils. Ces lignes ne contiennent ni contenu de cours ni identifiant de personne.
 
 ### EX-13 : retour arrière trivial
 
-**Critère** : dans un déploiement où pi n'est pas configuré, l'application se comporte **exactement** comme la version actuelle : pas de sélecteur, pas de route supplémentaire, pas de processus enfant, aucune dépendance nouvelle sollicitée au démarrage.
+**Critère** : dans un déploiement où pi n'est pas configuré, l'application se comporte **exactement** comme la version actuelle : deux modes seulement, pas de route supplémentaire, pas de processus enfant, aucune dépendance nouvelle sollicitée au démarrage.
 
 ---
 
@@ -167,11 +171,11 @@ Le pilote est concluant quand les trois conditions suivantes sont réunies :
 
 | Hypothèse | Si elle est fausse |
 |-----------|--------------------|
-| Bifrost est déjà déployé et joignable depuis le backend, en API compatible OpenAI | pi ne peut pas être configuré : l'application retombe sur le comportement EX-13, sans sélecteur |
+| Bifrost est déjà déployé et joignable depuis le backend, en API compatible OpenAI | pi ne peut pas être configuré : l'application retombe sur le comportement EX-13, sans mode `Pi` |
 | Une clé d'accès Bifrost peut être livrée au conteneur comme secret | Idem |
 | L'image backend peut embarquer un moteur Node 22 ou plus | Le second agent n'est pas embarquable dans le conteneur actuel : il faudrait passer par la variante de conteneur séparé documentée dans le design |
 | Le workspace reste mono-utilisateur | Le confinement décrit en NF-6 devient insuffisant et il faut passer à une isolation par utilisateur |
 
 ---
 
-*Exigences : second agent pi + Bifrost, derrière un sélecteur, pour répondre par l'usage à la question de l'adéquation de Hermes.*
+*Exigences : second agent pi + Bifrost, exposé comme troisième mode, pour répondre par l'usage à la question de l'adéquation de Hermes.*
