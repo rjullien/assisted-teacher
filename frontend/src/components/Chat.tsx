@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { AuthWebSocket, handleAuthExpired } from '../api'
 
@@ -19,12 +19,85 @@ interface StreamEvent {
   jobId?: string
 }
 
+interface ProgrammeData {
+  niveau: string
+  cecrl: Record<string, string>
+  axes_culturels: Array<{
+    numero: number
+    titre: string
+    description: string
+    exemples_objets_etude: string[]
+    obligatoire: boolean
+  }>
+  contraintes: {
+    axes_a_traiter: number
+    axes_total: number
+    axe_obligatoire: number
+    note: string
+  }
+  competences: Record<string, {
+    code: string
+    descripteur: string
+    niveau_attendu_LVA: string
+    niveau_attendu_LVB: string
+  }>
+  grammaire: string[]
+  vocabulaire_thematique: Record<string, string[]>
+}
+
 interface ChatProps {
   currentFile: string | null
   onInsert: (text: string) => void
+  programme: ProgrammeData | null
 }
 
-export default function Chat({ currentFile, onInsert }: ChatProps) {
+// --- System prompt builder ---
+
+function buildSystemPrompt(programme: ProgrammeData | null): string {
+  if (!programme) {
+    return 'Tu es un assistant pédagogique spécialisé dans la création de cours et exercices d\'anglais au lycée. Réponds en français sauf si on te demande du contenu en anglais.'
+  }
+
+  const { niveau, cecrl, axes_culturels, contraintes, competences, grammaire } = programme
+
+  const axesList = axes_culturels
+    .map((a) => `  ${a.numero}. ${a.titre}${a.obligatoire ? ' (OBLIGATOIRE)' : ''}`)
+    .join('\n')
+
+  const competencesList = Object.values(competences)
+    .map((c) => `  - ${c.code} : ${c.descripteur} (LVA ${c.niveau_attendu_LVA}, LVB ${c.niveau_attendu_LVB})`)
+    .join('\n')
+
+  const grammaireList = grammaire.map((g) => `  - ${g}`).join('\n')
+
+  return `Tu es un assistant pédagogique pour un cours d'anglais niveau ${niveau} (programme officiel BO 2025).
+
+OBJECTIFS CECRL :
+- LVA : ${cecrl.LVA}
+- LVB : ${cecrl.LVB}
+${cecrl.LVC ? `- LVC : ${cecrl.LVC}` : ''}
+
+AXES CULTURELS DU PROGRAMME :
+${axesList}
+Contrainte : ${contraintes.note}
+
+COMPÉTENCES LANGAGIÈRES ATTENDUES :
+${competencesList}
+
+POINTS DE GRAMMAIRE AU PROGRAMME :
+${grammaireList}
+
+CONSIGNES :
+- Adapte le vocabulaire et la grammaire au niveau CECRL visé (${cecrl.LVA} en LVA, ${cecrl.LVB} en LVB).
+- Respecte les axes thématiques du programme officiel 2025.
+- Propose des exercices variés (CO, CE, EO, EE, interaction, médiation).
+- Ne dépasse PAS le niveau linguistique attendu pour la classe de ${niveau}.
+- Quand tu proposes une activité, indique à quel axe culturel et quelle(s) compétence(s) elle se rattache.
+- Réponds en français sauf si on te demande du contenu en anglais.
+- Si on te demande de vérifier la conformité d'un cours, analyse-le au regard du programme (axe, niveau, grammaire, vocabulaire).`
+}
+
+export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -33,6 +106,9 @@ export default function Chat({ currentFile, onInsert }: ChatProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const currentJobId = useRef<string | null>(null)
   const wsRef = useRef<AuthWebSocket | null>(null)
+
+  // Memoize system prompt so it only changes when programme changes
+  const systemPrompt = useMemo(() => buildSystemPrompt(programme), [programme])
 
   const handleStreamEvent = useCallback((ev: StreamEvent) => {
     switch (ev.type) {
@@ -233,11 +309,11 @@ export default function Chat({ currentFile, onInsert }: ChatProps) {
       content = `[Contexte: je travaille sur le fichier "${currentFile}"]\n\n${content}`
     }
 
-    // Send message in the format the backend expects
+    // Send message with dynamic system prompt based on selected niveau
     wsRef.current.send({
       type: 'prompt',
       content,
-      system: 'Tu es un assistant pédagogique spécialisé dans la création de cours et exercices. Réponds en français sauf si on te demande du contenu en anglais.',
+      system: systemPrompt,
     })
     setInput('')
   }
@@ -253,6 +329,11 @@ export default function Chat({ currentFile, onInsert }: ChatProps) {
     <div className="chat-panel">
       <div className="chat-header">
         💬 Assistant IA
+        {programme && (
+          <span className="chat-niveau-badge">
+            {programme.niveau} — {programme.cecrl.LVA}
+          </span>
+        )}
         {!connected && !authError && (
           <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>
             (reconnexion…)
@@ -271,8 +352,9 @@ export default function Chat({ currentFile, onInsert }: ChatProps) {
             <br /><br />
             Exemples :
             <br />• "Génère 5 exercices de gap-fill sur le present perfect, niveau B1"
-            <br />• "Reformule ce paragraphe pour des élèves de 3ème"
-            <br />• "Crée un quiz à choix multiples sur le vocabulaire des animaux"
+            <br />• "Reformule ce paragraphe pour des élèves de {programme?.niveau || 'Seconde'}"
+            <br />• "Ce cours respecte-t-il l'axe 4 du programme ?"
+            <br />• "Propose un plan de séquence sur l'axe Commonwealth"
           </div>
         )}
         {messages.map((msg) => (

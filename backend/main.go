@@ -36,6 +36,11 @@ func main() {
 	mux.HandleFunc("POST /api/files/mkdir", fileAPI.MkDir)
 	mux.HandleFunc("POST /api/files/rename", fileAPI.Rename)
 
+	// Programme API (official curriculum data)
+	progAPI := api.NewProgrammeHandler(*workDir)
+	mux.HandleFunc("GET /api/programmes", progAPI.ListProgrammes)
+	mux.HandleFunc("GET /api/programme", progAPI.GetProgramme)
+
 	// Export API
 	exportHandler := export.NewHandler(*workDir)
 	mux.HandleFunc("POST /api/export/pdf", exportHandler.ExportPDF)

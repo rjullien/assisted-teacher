@@ -1,13 +1,31 @@
+export type Niveau = 'seconde' | 'premiere' | 'terminale'
+
 interface ToolbarProps {
   currentFile: string | null
+  niveau: Niveau
+  onNiveauChange: (niveau: Niveau) => void
   onExportPDF: () => void
   onExportDOCX: () => void
 }
 
-export default function Toolbar({ currentFile, onExportPDF, onExportDOCX }: ToolbarProps) {
+export default function Toolbar({ currentFile, niveau, onNiveauChange, onExportPDF, onExportDOCX }: ToolbarProps) {
   return (
     <div className="toolbar">
       <h1>📚 Assistant Pédagogique</h1>
+
+      <div className="toolbar-niveau">
+        <label htmlFor="niveau-select">Niveau :</label>
+        <select
+          id="niveau-select"
+          value={niveau}
+          onChange={(e) => onNiveauChange(e.target.value as Niveau)}
+        >
+          <option value="seconde">Seconde</option>
+          <option value="premiere">Première</option>
+          <option value="terminale">Terminale</option>
+        </select>
+      </div>
+
       <span className="current-file">
         {currentFile || 'Aucun fichier sélectionné'}
       </span>
