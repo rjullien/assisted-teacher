@@ -1,0 +1,149 @@
+{
+  "niveau": "Year 10 (Seconde)",
+  "cecrl": {
+    "LVA": "B1+",
+    "LVB": "A2+",
+    "LVC": "A1/A2"
+  },
+  "axes_culturels": [
+    {
+      "numero": 1,
+      "titre": "Self-representation and relationships with others",
+      "description": "The expression of personal identity and the construction of relationships in English-speaking societies.",
+      "exemples_objets_etude": [
+        "Autobiographies and diaries",
+        "Digital identities and social media",
+        "Cultural stereotypes and prejudices",
+        "Rites of passage (prom, gap year)"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 2,
+      "titre": "Living across generations",
+      "description": "Intergenerational relationships, transmission, conflicts and solidarity between generations in the English-speaking world.",
+      "exemples_objets_etude": [
+        "Traditional and blended families",
+        "Cultural heritage and oral transmission",
+        "Generational conflicts (baby boomers vs Gen Z)",
+        "Ageing and the place of elders"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 3,
+      "titre": "The past in the present",
+      "description": "How the past (historical, memorial, heritage) influences and sheds light on the present in English-speaking societies.",
+      "exemples_objets_etude": [
+        "Monuments and sites of remembrance",
+        "Civil rights movements and their legacy",
+        "Colonisation and decolonisation",
+        "Rewriting history (films, novels)"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 4,
+      "titre": "Challenges and transitions",
+      "description": "Major contemporary challenges and transitions (ecological, technological, societal) facing English-speaking societies.",
+      "exemples_objets_etude": [
+        "Climate change and civic engagement",
+        "Digital transition and artificial intelligence",
+        "Migration and mobility",
+        "Urbanisation and new forms of community living"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 5,
+      "titre": "Creating and recreating",
+      "description": "Artistic, literary and cultural creation as a means of expression and transformation in the English-speaking world.",
+      "exemples_objets_etude": [
+        "Street art and activist art",
+        "Fan fiction and participatory cultures",
+        "Literary adaptations (from novel to film)",
+        "Music and cultural movements (hip-hop, punk, grime)"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 6,
+      "titre": "The Commonwealth",
+      "description": "Study of Commonwealth countries: cultural diversity, historical ties, contemporary issues. Compulsory axis opening up to the diversity of the English-speaking world beyond the UK and the USA.",
+      "exemples_objets_etude": [
+        "English-speaking India (Bollywood, literature)",
+        "Australia and Indigenous peoples",
+        "Multicultural Canada",
+        "Post-apartheid South Africa",
+        "The Commonwealth Games"
+      ],
+      "obligatoire": true
+    }
+  ],
+  "contraintes": {
+    "axes_a_traiter": 5,
+    "axes_total": 6,
+    "axe_obligatoire": 6,
+    "note": "5 out of 6 axes must be covered during the year, including axis 6 (The Commonwealth) which is compulsory."
+  },
+  "competences": {
+    "comprehension_orale": {
+      "code": "CO",
+      "descripteur": "Understand the main points of elaborate oral messages (conversations, radio/TV broadcasts, presentations) on familiar or personal-interest topics.",
+      "niveau_attendu_LVA": "B1+",
+      "niveau_attendu_LVB": "A2+"
+    },
+    "comprehension_ecrite": {
+      "code": "CE",
+      "descripteur": "Understand texts written in everyday language on topics related to daily life, current affairs or the field of study.",
+      "niveau_attendu_LVA": "B1+",
+      "niveau_attendu_LVB": "A2+"
+    },
+    "expression_orale": {
+      "code": "EO",
+      "descripteur": "Express oneself clearly on familiar topics, recount an event, describe a hope, briefly give reasons and explanations.",
+      "niveau_attendu_LVA": "B1+",
+      "niveau_attendu_LVB": "A2+"
+    },
+    "expression_ecrite": {
+      "code": "EE",
+      "descripteur": "Write a simple, coherent text on familiar topics, personal letters describing experiences and impressions.",
+      "niveau_attendu_LVA": "B1+",
+      "niveau_attendu_LVB": "A2+"
+    },
+    "interaction": {
+      "code": "IO",
+      "descripteur": "Handle most everyday situations, take part in unprepared conversation on familiar topics.",
+      "niveau_attendu_LVA": "B1+",
+      "niveau_attendu_LVB": "A2+"
+    },
+    "mediation": {
+      "code": "MED",
+      "descripteur": "Rephrase, explain or summarise a text or statement for a third party, facilitate intercultural understanding.",
+      "niveau_attendu_LVA": "B1",
+      "niveau_attendu_LVB": "A2"
+    }
+  },
+  "grammaire": [
+    "Present simple and present continuous (revision and deepening)",
+    "Past simple and past continuous",
+    "Present perfect simple (for, since, already, yet, just)",
+    "Future (will, be going to, present continuous as future)",
+    "Modals (can, could, must, should, may, might)",
+    "Comparatives and superlatives",
+    "Relative clauses (who, which, that, whose, where)",
+    "Reported speech (said that, told me that)",
+    "Passive voice (present and past)",
+    "Conditional types 1 and 2 (if + present / will; if + past / would)",
+    "Quantifiers (some, any, no, every + compounds)",
+    "Logical connectors (however, therefore, although, moreover)"
+  ],
+  "vocabulaire_thematique": {
+    "axe_1_self_representation": ["identity", "self-image", "appearance", "personality traits", "feelings", "relationships", "social media", "profile", "influence", "diversity"],
+    "axe_2_living_across_generations": ["generation gap", "heritage", "tradition", "upbringing", "elderly", "youth", "inheritance", "family bonds", "values", "conflict"],
+    "axe_3_past_in_present": ["memory", "monument", "commemoration", "legacy", "civil rights", "colony", "independence", "heritage site", "ancestors", "slavery"],
+    "axe_4_challenges_and_transitions": ["climate change", "sustainability", "renewable energy", "migration", "digital revolution", "artificial intelligence", "challenge", "transition", "urbanisation", "community"],
+    "axe_5_creating_and_recreating": ["creativity", "artwork", "performance", "adaptation", "fiction", "genre", "lyrics", "exhibition", "graffiti", "remix"],
+    "axe_6_commonwealth": ["Commonwealth", "former colony", "multicultural", "indigenous", "cricket", "Bollywood", "maple leaf", "apartheid", "diversity", "unity"]
+  }
+}

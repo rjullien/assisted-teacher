@@ -1,0 +1,149 @@
+{
+  "niveau": "Year 12 (Terminale)",
+  "cecrl": {
+    "LVA": "B2",
+    "LVB": "B1+",
+    "LVC": "A2+/B1"
+  },
+  "axes_culturels": [
+    {
+      "numero": 1,
+      "titre": "Private and public spaces",
+      "description": "The boundaries between private and public life, their evolution in contemporary English-speaking societies.",
+      "exemples_objets_etude": [
+        "Social media and self-exposure",
+        "Whistleblowers (Snowden, Assange)",
+        "Right to be forgotten and personal data",
+        "Architecture and urban planning (gated communities, public spaces)"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 2,
+      "titre": "Territory and memory",
+      "description": "The construction of territories and collective memories in the English-speaking world, between heritage and conflicts.",
+      "exemples_objets_etude": [
+        "Indigenous territories and reconciliation",
+        "The Berlin Wall / the USA-Mexico wall",
+        "Memory of slavery and reparations",
+        "Sites of remembrance and memorial tourism"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 3,
+      "titre": "Fiction and reality",
+      "description": "The relationship between fiction and reality: how works of fiction reflect, question or transform reality in English-speaking culture.",
+      "exemples_objets_etude": [
+        "Dystopias and speculative fiction (Orwell, Atwood, Ishiguro)",
+        "Fake news and post-truth",
+        "Docufiction and biopics",
+        "Virtual reality and the metaverse"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 4,
+      "titre": "Communication issues",
+      "description": "Transformations in communication and their implications (media, political, interpersonal) in English-speaking societies.",
+      "exemples_objets_etude": [
+        "Political rhetoric and speeches (I have a dream, Yes we can)",
+        "Traditional media vs new media",
+        "Influence and manipulation (Cambridge Analytica)",
+        "Intercultural communication and misunderstandings"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 5,
+      "titre": "Citizenship and virtual worlds",
+      "description": "Exercising citizenship in digital and virtual worlds, between opportunities and pitfalls.",
+      "exemples_objets_etude": [
+        "Hacktivism and cyber-dissidence",
+        "Electronic voting and digital democracy",
+        "Online harassment and moderation",
+        "Virtual economy (crypto, NFT, gaming)"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 6,
+      "titre": "The United Kingdom and its nations",
+      "description": "Study of the United Kingdom in its national diversity (England, Scotland, Wales, Northern Ireland): identities, tensions, common future. Compulsory axis.",
+      "exemples_objets_etude": [
+        "Brexit and its consequences on UK unity",
+        "Scottish independence movement",
+        "The Northern Irish conflict and the peace process",
+        "Welsh identity and linguistic revival",
+        "The British monarchy: tradition and modernity"
+      ],
+      "obligatoire": true
+    }
+  ],
+  "contraintes": {
+    "axes_a_traiter": 5,
+    "axes_total": 6,
+    "axe_obligatoire": 6,
+    "note": "5 out of 6 axes must be covered during the year, including axis 6 (The United Kingdom and its nations) which is compulsory."
+  },
+  "competences": {
+    "comprehension_orale": {
+      "code": "CO",
+      "descripteur": "Understand extended speech even when not clearly structured, understand TV programmes and films without too much effort.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1+"
+    },
+    "comprehension_ecrite": {
+      "code": "CE",
+      "descripteur": "Understand long, complex factual or literary texts, appreciate differences in style, understand specialised articles.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1+"
+    },
+    "expression_orale": {
+      "code": "EO",
+      "descripteur": "Give a clear, well-structured presentation with clear argumentation, depart spontaneously from a prepared text and follow up on audience reactions.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1+"
+    },
+    "expression_ecrite": {
+      "code": "EE",
+      "descripteur": "Write clear, detailed texts, an argumentative essay, a review, a professional report with a stated position.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1+"
+    },
+    "interaction": {
+      "code": "IO",
+      "descripteur": "Actively participate in formal or informal discussion, negotiate, argue convincingly, react to others' arguments.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1+"
+    },
+    "mediation": {
+      "code": "MED",
+      "descripteur": "Summarise, synthesise and reliably convey information and arguments from multiple sources, adapt discourse to context.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1"
+    }
+  },
+  "grammaire": [
+    "Subjunctive (I suggest that he go…, if I were…)",
+    "Stylistic inversion (Not only… but also, Hardly had… when)",
+    "Advanced epistemic and deontic modals (shall, ought to, need, dare)",
+    "Participial structures (Having done…, Being asked…)",
+    "Nominalisation and formal style",
+    "Ellipsis and substitution (so do I, neither can they)",
+    "Complex reported speech (varied reporting verbs: urged, insisted, denied + -ing)",
+    "Advanced discourse connectors (notwithstanding, henceforth, thereby)",
+    "Advanced cleft and pseudo-cleft sentences",
+    "Mixed conditionals (If I had studied / I would be…)",
+    "Reduced relative clauses and appositives",
+    "Perfect aspect and its nuances (have been doing vs have done vs did)"
+  ],
+  "vocabulaire_thematique": {
+    "axe_1_private_and_public_spaces": ["privacy", "surveillance", "whistleblower", "data breach", "boundaries", "public sphere", "exposure", "anonymity", "transparency", "intimate"],
+    "axe_2_territory_and_memory": ["territory", "border", "indigenous", "reconciliation", "reparations", "memorial", "displacement", "sovereignty", "heritage", "landmark"],
+    "axe_3_fiction_and_reality": ["dystopia", "fake news", "post-truth", "narrative", "fiction", "virtual reality", "metaverse", "biopic", "unreliable narrator", "blurred lines"],
+    "axe_4_communication_issues": ["rhetoric", "persuasion", "misinformation", "media literacy", "spin", "propaganda", "influence", "framing", "bias", "discourse"],
+    "axe_5_citizenship_and_virtual_worlds": ["hacktivism", "cyberbullying", "digital citizenship", "cryptocurrency", "moderation", "algorithm", "avatar", "e-democracy", "troll", "encryption"],
+    "axe_6_uk_and_its_nations": ["devolution", "Brexit", "Commonwealth", "monarchy", "Scottish independence", "Northern Ireland", "Good Friday Agreement", "Wales", "unionism", "sovereignty"]
+  }
+}

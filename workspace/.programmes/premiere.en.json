@@ -1,0 +1,149 @@
+{
+  "niveau": "Year 11 (Première)",
+  "cecrl": {
+    "LVA": "B1+/B2",
+    "LVB": "B1",
+    "LVC": "A2/A2+"
+  },
+  "axes_culturels": [
+    {
+      "numero": 1,
+      "titre": "Identities and exchanges",
+      "description": "The construction of individual and collective identities through intercultural exchanges within the English-speaking world.",
+      "exemples_objets_etude": [
+        "Expatriation and student mobility (Erasmus, gap year)",
+        "Multilingualism and plural identities",
+        "Diasporas and transnational communities",
+        "International trade and cultural globalisation"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 2,
+      "titre": "Diversity and inclusion",
+      "description": "Issues of diversity (ethnic, social, gender) and inclusion policies in English-speaking societies.",
+      "exemples_objets_etude": [
+        "Equality movements (feminism, LGBTQ+, BLM)",
+        "Affirmative action policies",
+        "Disability and accessibility",
+        "Representation in media and popular culture"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 3,
+      "titre": "Art and power",
+      "description": "The relationship between artistic creation and political, economic or social power in the English-speaking world.",
+      "exemples_objets_etude": [
+        "Propaganda art vs resistance art",
+        "Censorship and freedom of expression",
+        "Patronage and the cultural industry",
+        "Soft power and cultural diplomacy (Hollywood, BBC)"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 4,
+      "titre": "Scientific innovations and responsibility",
+      "description": "Scientific and technological advances and the ethical questions they raise in English-speaking countries.",
+      "exemples_objets_etude": [
+        "Artificial intelligence and ethics",
+        "Biotechnologies and transhumanism",
+        "Space exploration (NASA, SpaceX)",
+        "Big data, surveillance and privacy"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 5,
+      "titre": "Humans and nature",
+      "description": "Interactions between humanity and the natural environment, ecological challenges in the English-speaking world.",
+      "exemples_objets_etude": [
+        "National parks and biodiversity protection",
+        "Natural disasters and resilience",
+        "Intensive farming vs permaculture",
+        "Ecological activism (Extinction Rebellion, Greta Thunberg)"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 6,
+      "titre": "English-speaking Americas",
+      "description": "In-depth study of American societies (USA, Canada, English-speaking Caribbean): history, culture, contemporary issues. Compulsory axis.",
+      "exemples_objets_etude": [
+        "The American Dream: myth and reality",
+        "Canadian multiculturalism",
+        "The English-speaking Caribbean (Jamaica, Trinidad)",
+        "Segregation, civil rights and their current legacy",
+        "Hip-hop culture as a social vehicle"
+      ],
+      "obligatoire": true
+    }
+  ],
+  "contraintes": {
+    "axes_a_traiter": 5,
+    "axes_total": 6,
+    "axe_obligatoire": 6,
+    "note": "5 out of 6 axes must be covered during the year, including axis 6 (English-speaking Americas) which is compulsory."
+  },
+  "competences": {
+    "comprehension_orale": {
+      "code": "CO",
+      "descripteur": "Understand lectures, speeches and broadcasts on concrete or abstract subjects, including technical discussions in one's field.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1"
+    },
+    "comprehension_ecrite": {
+      "code": "CE",
+      "descripteur": "Read articles and reports on contemporary issues, understand a contemporary literary prose text.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1"
+    },
+    "expression_orale": {
+      "code": "EO",
+      "descripteur": "Present clear, detailed descriptions on complex subjects, develop a point of view with arguments and examples.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1"
+    },
+    "expression_ecrite": {
+      "code": "EE",
+      "descripteur": "Write clear, detailed texts on various subjects, an essay or report conveying information or presenting reasons for or against an opinion.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1"
+    },
+    "interaction": {
+      "code": "IO",
+      "descripteur": "Communicate fluently and spontaneously, actively participate in conversation in familiar situations, present and defend opinions.",
+      "niveau_attendu_LVA": "B2",
+      "niveau_attendu_LVB": "B1"
+    },
+    "mediation": {
+      "code": "MED",
+      "descripteur": "Clearly convey the essence of a text or exchange, adapt register to the audience, facilitate intercultural communication.",
+      "niveau_attendu_LVA": "B1+",
+      "niveau_attendu_LVB": "A2+"
+    }
+  },
+  "grammaire": [
+    "Present perfect continuous (have been + -ing)",
+    "Past perfect simple and continuous",
+    "Modals of deduction (must be, can't be, might be)",
+    "Conditional type 3 (if + past perfect / would have + pp)",
+    "Wish + past / wish + past perfect",
+    "Defining and non-defining relative clauses",
+    "Passive voice (all tenses, impersonal passive: it is said that…)",
+    "Reported speech with tense changes",
+    "Used to / would for past habits",
+    "Causative structures (have/get something done)",
+    "Emphasis (cleft sentences: It is… that/who; What… is…)",
+    "Concession and opposition connectors (despite, in spite of, whereas, nevertheless)"
+  ],
+  "vocabulaire_thematique": {
+    "axe_1_identities_and_exchanges": ["exchange", "identity", "expatriate", "cultural shock", "globalisation", "multilingual", "diaspora", "belonging", "integration", "border"],
+    "axe_2_diversity_and_inclusion": ["diversity", "inclusion", "equality", "discrimination", "gender", "minority", "representation", "empowerment", "accessibility", "tolerance"],
+    "axe_3_art_and_power": ["propaganda", "censorship", "freedom of speech", "patronage", "soft power", "exhibition", "controversial", "commission", "mainstream", "subversive"],
+    "axe_4_innovations_and_responsibility": ["breakthrough", "ethics", "artificial intelligence", "biotechnology", "privacy", "surveillance", "data", "accountability", "research", "patent"],
+    "axe_5_humans_and_nature": ["biodiversity", "ecosystem", "deforestation", "carbon footprint", "wildlife", "sustainability", "activism", "endangered species", "resilience", "conservation"],
+    "axe_6_english_speaking_americas": ["American Dream", "melting pot", "segregation", "civil rights", "First Nations", "hip-hop", "Broadway", "Silicon Valley", "immigration", "frontier"]
+  }
+}

@@ -82,12 +82,12 @@ export default function App() {
     t: (key: string, params?: Record<string, string | number>) => tFn(locale, key, params),
   }), [locale, handleSetLocale])
 
-  // Fetch programme data when niveau changes
-  const fetchProgramme = useCallback(async (niv: string) => {
+  // Fetch programme data when niveau or locale changes
+  const fetchProgramme = useCallback(async (niv: string, lang: string) => {
     setProgramme(null)
     setProgrammeError(false)
     try {
-      const res = await getJSON<ProgrammeData>(`/api/programme?niveau=${niv}`)
+      const res = await getJSON<ProgrammeData>(`/api/programme?niveau=${niv}&lang=${lang}`)
       if (res.ok && res.data) {
         setProgramme(res.data)
         setProgrammeError(false)
@@ -100,8 +100,8 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    fetchProgramme(niveau)
-  }, [niveau, fetchProgramme])
+    fetchProgramme(niveau, locale)
+  }, [niveau, locale, fetchProgramme])
 
   const handleNiveauChange = useCallback((n: Niveau) => {
     setNiveau(n)
@@ -182,7 +182,7 @@ export default function App() {
             refreshKey={refreshKey}
             programme={programme}
             programmeError={programmeError}
-            onRetryProgramme={() => fetchProgramme(niveau)}
+            onRetryProgramme={() => fetchProgramme(niveau, locale)}
             onFileSelect={handleFileSelect}
             onFileTreeRefresh={handleFileTreeRefresh}
             onFileContentChange={setFileContent}

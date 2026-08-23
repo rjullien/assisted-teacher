@@ -22,7 +22,7 @@ var validNiveaux = map[string]bool{
 	"terminale": true,
 }
 
-// GetProgramme serves GET /api/programme?niveau=seconde|premiere|terminale
+// GetProgramme serves GET /api/programme?niveau=seconde|premiere|terminale&lang=fr|en
 func (h *ProgrammeHandler) GetProgramme(w http.ResponseWriter, r *http.Request) {
 	niveau := r.URL.Query().Get("niveau")
 	if niveau == "" {
@@ -35,16 +35,42 @@ func (h *ProgrammeHandler) GetProgramme(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Determine language: default to "fr"
+	lang := r.URL.Query().Get("lang")
+	if lang != "en" {
+		lang = "fr"
+	}
+
+	// Build filename: seconde.json (fr) or seconde.en.json (en)
+	var filename string
+	if lang == "en" {
+		filename = niveau + ".en.json"
+	} else {
+		filename = niveau + ".json"
+	}
+
 	// Try direct path first (PROGRAMMES_DIR points directly to the folder with JSON files)
-	filePath := filepath.Join(h.workDir, niveau+".json")
+	filePath := filepath.Join(h.workDir, filename)
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		// Fallback: try .programmes/ subdirectory (legacy layout where workDir is the workspace root)
-		filePath = filepath.Join(h.workDir, ".programmes", niveau+".json")
+		filePath = filepath.Join(h.workDir, ".programmes", filename)
 		content, err = os.ReadFile(filePath)
 		if err != nil {
-			httpError(w, http.StatusNotFound, "programme file not found for niveau: %s", niveau)
-			return
+			// If EN not found, fallback to FR
+			if lang == "en" {
+				frFilename := niveau + ".json"
+				filePath = filepath.Join(h.workDir, frFilename)
+				content, err = os.ReadFile(filePath)
+				if err != nil {
+					filePath = filepath.Join(h.workDir, ".programmes", frFilename)
+					content, err = os.ReadFile(filePath)
+				}
+			}
+			if err != nil {
+				httpError(w, http.StatusNotFound, "programme file not found for niveau: %s (lang: %s)", niveau, lang)
+				return
+			}
 		}
 	}
 
