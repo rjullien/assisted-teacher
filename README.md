@@ -95,7 +95,15 @@ Les fichiers Markdown sont la source de vérité. Les exports sont générés à
 
 Le backend n'utilise plus de subprocess ACP : il appelle Lya en HTTP streaming (`POST /v1/chat/completions` + `Authorization: Bearer …`).
 
-Si le chat affiche `Échec IA` avec un détail `hermes auth failed (HTTP 401)` / `Invalid gateway API key`, ce n'est **pas** Authelia : c'est la clé gateway Hermes. Aligner `HERMES_API_KEY` (secret assisted-teacher) sur `API_SERVER_KEY` du pod `hermes-lya`.
+Si le chat affiche `Échec IA` avec un détail `hermes auth failed (HTTP 401)` / `Invalid gateway API key`, ce n'est **pas** Authelia : c'est la clé gateway Hermes.
+
+**Piège prod (vérifié Tailscale/k3s) :** Hermes valide `API_SERVER_KEY` depuis le fichier PVC `/opt/data/.env`, **pas** depuis l'env K8s/Infisical injectée dans le pod. Les deux peuvent diverger après un rotate Infisical. Alignement :
+
+1. Infisical `hermes-lya-secret.API_SERVER_KEY` == `assisted-teacher-secret.API_SERVER_KEY` (== `HERMES_API_KEY`)
+2. **et** `/opt/data/.env` `API_SERVER_KEY` sur le PVC `hermes-lya-data` == la même valeur
+3. puis `kubectl -n openclaw rollout restart deploy/hermes-lya`
+
+Même pattern possible sur `hermes-leo` / TripKit.
 
 ## Roadmap
 
