@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { AuthWebSocket, handleAuthExpired } from '../api'
+import { useI18n } from '../i18n'
 
 interface ChatMessage {
   id: string
@@ -111,6 +112,7 @@ CONSIGNES :
 }
 
 export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
+  const { t } = useI18n()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -126,12 +128,10 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
   const handleStreamEvent = useCallback((ev: StreamEvent) => {
     switch (ev.type) {
       case 'meta':
-        // Job started — store jobId for potential reconnect
         currentJobId.current = ev.jobId || null
         break
 
       case 'delta':
-        // Streaming text chunk — append to current assistant message
         if (ev.text) {
           setMessages((prev) => {
             const last = prev[prev.length - 1]
@@ -155,7 +155,6 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
         break
 
       case 'done':
-        // Stream finished — finalize the assistant message
         setMessages((prev) => {
           const last = prev[prev.length - 1]
           if (last && last.role === 'assistant' && last.isStreaming) {
@@ -168,7 +167,6 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
               },
             ]
           }
-          // If no streaming message exists yet, create a final one
           if (ev.reply) {
             return [
               ...prev,
@@ -187,13 +185,11 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
         break
 
       case 'error':
-        // Error from backend — check if auth-related
         const errMsg = ev.error || 'erreur inconnue'
         const detail = ev.detail ? `\n\n\`${ev.detail}\`` : ''
         if (/auth|session|expir/i.test(errMsg)) {
           setAuthError(true)
           if (!handleAuthExpired()) {
-            // Already tried redirect — show message
             setMessages((prev) => [
               ...prev,
               {
@@ -255,9 +251,7 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
         setConnected(false)
         if (reason === 'auth_expired') {
           setAuthError(true)
-          // AuthWebSocket already calls handleAuthExpired() internally
         }
-        // If we were mid-stream, show a reconnection message
         if (isLoading) {
           setMessages((prev) => {
             const last = prev[prev.length - 1]
@@ -280,7 +274,6 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
         console.log('WebSocket reconnected')
         setConnected(true)
         setAuthError(false)
-        // If there was an active job, try to resubscribe
         if (currentJobId.current) {
           authWs.send({
             type: 'subscribe',
@@ -316,13 +309,11 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
     setMessages((prev) => [...prev, userMessage])
     setIsLoading(true)
 
-    // Build context with current file info
     let content = input.trim()
     if (currentFile) {
       content = `[Contexte: je travaille sur le fichier "${currentFile}"]\n\n${content}`
     }
 
-    // Send message with dynamic system prompt based on selected niveau
     wsRef.current.send({
       type: 'prompt',
       content,
@@ -341,7 +332,7 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
   return (
     <div className="chat-panel">
       <div className="chat-header">
-        💬 Assistant IA
+        {t('chat.title')}
         {programme && (
           <span className="chat-niveau-badge">
             {programme.niveau} — {programme.cecrl.LVA}
@@ -349,25 +340,25 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
         )}
         {!connected && !authError && (
           <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>
-            (reconnexion…)
+            {t('chat.reconnecting')}
           </span>
         )}
         {authError && (
           <span style={{ fontSize: '11px', color: '#e74c3c', marginLeft: '8px' }}>
-            (session expirée)
+            {t('chat.expired')}
           </span>
         )}
       </div>
       <div className="chat-messages">
         {messages.length === 0 && (
           <div style={{ color: 'var(--text-muted)', fontSize: '13px', padding: '16px' }}>
-            Posez une question ou demandez à l'IA de générer du contenu pour votre cours.
+            {t('chat.emptyHint')}
             <br /><br />
-            Exemples :
-            <br />• "Génère 5 exercices de gap-fill sur le present perfect, niveau B1"
-            <br />• "Reformule ce paragraphe pour des élèves de {programme?.niveau || 'Seconde'}"
-            <br />• "Ce cours respecte-t-il l'axe 4 du programme ?"
-            <br />• "Propose un plan de séquence sur l'axe Commonwealth"
+            {t('chat.examples')}
+            <br />• {t('chat.example1')}
+            <br />• {t('chat.example2', { niveau: programme?.niveau || 'Seconde' })}
+            <br />• {t('chat.example3')}
+            <br />• {t('chat.example4')}
           </div>
         )}
         {messages.map((msg) => (
@@ -376,15 +367,15 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
             {msg.role === 'assistant' && !msg.isStreaming && (
               <div className="actions">
                 <button onClick={() => onInsert(msg.content)}>
-                  📝 Insérer dans le cours
+                  {t('chat.insert')}
                 </button>
                 <button onClick={() => navigator.clipboard.writeText(msg.content)}>
-                  📋 Copier
+                  {t('chat.copy')}
                 </button>
               </div>
             )}
             {msg.isStreaming && (
-              <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>⏳ en cours...</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{t('chat.streaming')}</span>
             )}
           </div>
         ))}
@@ -395,11 +386,11 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Demandez à l'IA..."
+          placeholder={t('chat.placeholder')}
           rows={2}
         />
         <button onClick={handleSend} disabled={isLoading || !input.trim() || !connected}>
-          {isLoading ? '...' : 'Envoyer'}
+          {isLoading ? t('chat.sending') : t('chat.send')}
         </button>
       </div>
     </div>

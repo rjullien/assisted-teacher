@@ -1,6 +1,6 @@
 import { Allotment } from 'allotment'
 import 'allotment/dist/style.css'
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import FileTree from './components/FileTree'
 import Editor from './components/Editor'
 import Chat from './components/Chat'
@@ -8,6 +8,7 @@ import MobileLayout from './components/MobileLayout'
 import ProgrammeDrawer from './components/ProgrammeDrawer'
 import Toolbar, { type Niveau } from './components/Toolbar'
 import { useIsMobile } from './hooks/useIsMobile'
+import { I18nContext, detectLocale, saveLocale, t as tFn, type Locale } from './i18n'
 import { getText, putText, postBlob, getJSON, handleAuthExpired } from './api'
 
 // --- Programme types ---
@@ -58,6 +59,7 @@ function saveNiveau(niveau: Niveau) {
 
 export default function App() {
   const isMobile = useIsMobile()
+  const [locale, setLocaleState] = useState<Locale>(detectLocale)
   const [currentFile, setCurrentFile] = useState<string | null>(null)
   const [fileContent, setFileContent] = useState<string>('')
   const [lastSavedContent, setLastSavedContent] = useState<string>('')
@@ -66,6 +68,18 @@ export default function App() {
   const [programme, setProgramme] = useState<ProgrammeData | null>(null)
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false)
   const flushRef = useRef<(() => Promise<void>) | null>(null)
+
+  // i18n context value
+  const handleSetLocale = useCallback((l: Locale) => {
+    setLocaleState(l)
+    saveLocale(l)
+  }, [])
+
+  const i18nValue = useMemo(() => ({
+    locale,
+    setLocale: handleSetLocale,
+    t: (key: string, params?: Record<string, string | number>) => tFn(locale, key, params),
+  }), [locale, handleSetLocale])
 
   // Fetch programme data when niveau changes
   useEffect(() => {
@@ -98,7 +112,6 @@ export default function App() {
   }, [currentFile])
 
   const handleFileSelect = async (path: string) => {
-    // Flush any pending auto-save before switching files
     if (flushRef.current) {
       await flushRef.current()
     }
@@ -116,15 +129,12 @@ export default function App() {
   }
 
   const handleInsertFromChat = (text: string) => {
-    // Append AI-generated content to the current editor content
     const newContent = fileContent ? fileContent + '\n\n' + text : text
     setFileContent(newContent)
-    // The auto-save will pick up the change automatically
   }
 
   const handleExport = async (format: 'pdf' | 'docx') => {
     if (!currentFile) return
-    // Flush before exporting to ensure latest content is saved
     if (flushRef.current) {
       await flushRef.current()
     }
@@ -147,74 +157,78 @@ export default function App() {
 
   if (isMobile) {
     return (
-      <div className="app app--mobile">
+      <I18nContext.Provider value={i18nValue}>
+        <div className="app app--mobile">
+          <Toolbar
+            currentFile={currentFile}
+            niveau={niveau}
+            onNiveauChange={handleNiveauChange}
+            onExportPDF={() => handleExport('pdf')}
+            onExportDOCX={() => handleExport('docx')}
+          />
+          <MobileLayout
+            currentFile={currentFile}
+            fileContent={fileContent}
+            lastSavedContent={lastSavedContent}
+            refreshKey={refreshKey}
+            programme={programme}
+            onFileSelect={handleFileSelect}
+            onFileTreeRefresh={handleFileTreeRefresh}
+            onFileContentChange={setFileContent}
+            onSave={handleSave}
+            onFlushRef={flushRef}
+            onInsertFromChat={handleInsertFromChat}
+          />
+        </div>
+      </I18nContext.Provider>
+    )
+  }
+
+  return (
+    <I18nContext.Provider value={i18nValue}>
+      <div className="app">
         <Toolbar
           currentFile={currentFile}
           niveau={niveau}
           onNiveauChange={handleNiveauChange}
           onExportPDF={() => handleExport('pdf')}
           onExportDOCX={() => handleExport('docx')}
+          onToggleProgramme={() => setProgrammeDrawerOpen((o) => !o)}
         />
-        <MobileLayout
-          currentFile={currentFile}
-          fileContent={fileContent}
-          lastSavedContent={lastSavedContent}
-          refreshKey={refreshKey}
+        <div className="workspace">
+          <Allotment>
+            <Allotment.Pane preferredSize={220} minSize={160} maxSize={400}>
+              <FileTree
+                onSelect={handleFileSelect}
+                onRefresh={handleFileTreeRefresh}
+                refreshKey={refreshKey}
+              />
+            </Allotment.Pane>
+            <Allotment.Pane preferredSize="50%">
+              <Editor
+                content={fileContent}
+                lastSavedContent={lastSavedContent}
+                onChange={setFileContent}
+                onSave={handleSave}
+                onFlushRef={flushRef}
+                filePath={currentFile}
+              />
+            </Allotment.Pane>
+            <Allotment.Pane preferredSize={360} minSize={280}>
+              <Chat
+                currentFile={currentFile}
+                onInsert={handleInsertFromChat}
+                programme={programme}
+              />
+            </Allotment.Pane>
+          </Allotment>
+        </div>
+        <ProgrammeDrawer
+          open={programmeDrawerOpen}
+          onClose={() => setProgrammeDrawerOpen(false)}
           programme={programme}
-          onFileSelect={handleFileSelect}
-          onFileTreeRefresh={handleFileTreeRefresh}
-          onFileContentChange={setFileContent}
-          onSave={handleSave}
-          onFlushRef={flushRef}
-          onInsertFromChat={handleInsertFromChat}
         />
       </div>
-    )
-  }
-
-  return (
-    <div className="app">
-      <Toolbar
-        currentFile={currentFile}
-        niveau={niveau}
-        onNiveauChange={handleNiveauChange}
-        onExportPDF={() => handleExport('pdf')}
-        onExportDOCX={() => handleExport('docx')}
-        onToggleProgramme={() => setProgrammeDrawerOpen((o) => !o)}
-      />
-      <div className="workspace">
-        <Allotment>
-          <Allotment.Pane preferredSize={220} minSize={160} maxSize={400}>
-            <FileTree
-              onSelect={handleFileSelect}
-              onRefresh={handleFileTreeRefresh}
-              refreshKey={refreshKey}
-            />
-          </Allotment.Pane>
-          <Allotment.Pane preferredSize="50%">
-            <Editor
-              content={fileContent}
-              lastSavedContent={lastSavedContent}
-              onChange={setFileContent}
-              onSave={handleSave}
-              onFlushRef={flushRef}
-              filePath={currentFile}
-            />
-          </Allotment.Pane>
-          <Allotment.Pane preferredSize={360} minSize={280}>
-            <Chat
-              currentFile={currentFile}
-              onInsert={handleInsertFromChat}
-              programme={programme}
-            />
-          </Allotment.Pane>
-        </Allotment>
-      </div>
-      <ProgrammeDrawer
-        open={programmeDrawerOpen}
-        onClose={() => setProgrammeDrawerOpen(false)}
-        programme={programme}
-      />
-    </div>
+    </I18nContext.Provider>
   )
 }

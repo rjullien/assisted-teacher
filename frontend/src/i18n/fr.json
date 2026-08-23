@@ -1,0 +1,85 @@
+{
+  "app": {
+    "title": "📚 Assistant Pédagogique"
+  },
+  "toolbar": {
+    "niveau": "Niveau :",
+    "seconde": "Seconde",
+    "premiere": "Première",
+    "terminale": "Terminale",
+    "programme": "📋 Programme",
+    "exportPdf": "📄 PDF",
+    "exportDocx": "📄 DOCX",
+    "noFile": "Aucun fichier sélectionné",
+    "lang": "🌐"
+  },
+  "fileTree": {
+    "title": "Mes cours",
+    "empty": "Aucun cours. Cliquez sur \"📄+\" pour créer un cours ou \"📁+\" pour créer un dossier.",
+    "newFilePrompt": "Nom du nouveau cours (ex: unit7)",
+    "newFolderPrompt": "Nom du nouveau dossier (ex: B2)",
+    "invalidName": "Nom invalide après nettoyage.",
+    "createFailed": "Création échouée",
+    "folderCreateFailed": "Création dossier échouée",
+    "deleteFailed": "Suppression échouée",
+    "renameFailed": "Renommage échoué",
+    "deleteConfirmFile": "Supprimer \"{name}\" ?",
+    "deleteConfirmFolder": "Supprimer le dossier \"{name}\" et tout son contenu ?",
+    "renamePrompt": "Nouveau nom :",
+    "unchanged": "Nom inchangé.",
+    "alreadySame": "Le nom est déjà le même.",
+    "created": "\"{name}\" créé",
+    "folderCreated": "Dossier \"{name}\" créé",
+    "deleted": "\"{name}\" supprimé",
+    "renamed": "Renommé → \"{name}\"",
+    "emptyFolder": "Dossier vide",
+    "lyaLink": "📎 Voir les fichiers de Lya (hack temporaire)",
+    "newFile": "Nouveau cours",
+    "newFolder": "Nouveau dossier",
+    "newFileHere": "Nouveau cours ici",
+    "newSubfolder": "Nouveau sous-dossier",
+    "rename": "Renommer",
+    "delete": "Supprimer"
+  },
+  "editor": {
+    "empty": "Sélectionnez un fichier à éditer",
+    "unsaved": "Non sauvegardé",
+    "saving": "Sauvegarde…",
+    "saved": "Sauvegardé",
+    "error": "Erreur de sauvegarde"
+  },
+  "chat": {
+    "title": "💬 Assistant IA",
+    "reconnecting": "(reconnexion…)",
+    "expired": "(session expirée)",
+    "placeholder": "Demandez à l'IA...",
+    "send": "Envoyer",
+    "sending": "...",
+    "insert": "📝 Insérer dans le cours",
+    "copy": "📋 Copier",
+    "streaming": "⏳ en cours...",
+    "emptyHint": "Posez une question ou demandez à l'IA de générer du contenu pour votre cours.",
+    "examples": "Exemples :",
+    "example1": "\"Génère 5 exercices de gap-fill sur le present perfect, niveau B1\"",
+    "example2": "\"Reformule ce paragraphe pour des élèves de {niveau}\"",
+    "example3": "\"Ce cours respecte-t-il l'axe 4 du programme ?\"",
+    "example4": "\"Propose un plan de séquence sur l'axe Commonwealth\""
+  },
+  "programme": {
+    "title": "Programme officiel",
+    "loading": "Chargement du programme…",
+    "header": "📋 Programme — {niveau}",
+    "axes": "Axes culturels ({count}/{total} à traiter)",
+    "axesNote": "{note}",
+    "obligatoire": "⭐ OBLIGATOIRE",
+    "competences": "Compétences langagières",
+    "grammaire": "Grammaire ({count} points)",
+    "vocabulaire": "Vocabulaire thématique"
+  },
+  "mobile": {
+    "files": "Fichiers",
+    "editor": "Éditeur",
+    "ia": "IA",
+    "programme": "Programme"
+  }
+}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getJSON, putText, request, postJSON, handleAuthExpired } from '../api'
+import { useI18n } from '../i18n'
 
 interface FileNode {
   name: string
@@ -27,6 +28,7 @@ function sanitizeFilename(raw: string): string {
 }
 
 export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreeProps) {
+  const { t } = useI18n()
   const [tree, setTree] = useState<FileNode[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' } | null>(null)
@@ -60,12 +62,12 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
 
   // Create a new file at a given directory path (empty string = root)
   const handleNewFile = async (dirPath: string = '') => {
-    const raw = prompt('Nom du nouveau cours (ex: unit7)')
+    const raw = prompt(t('fileTree.newFilePrompt'))
     if (!raw) return
     const withoutExt = raw.replace(/\.md$/i, '')
     const sanitized = sanitizeFilename(withoutExt)
     if (!sanitized) {
-      showToast('Nom invalide après nettoyage.')
+      showToast(t('fileTree.invalidName'))
       return
     }
     const fileName = sanitized + '.md'
@@ -80,22 +82,22 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
       return
     }
     if (!res.ok) {
-      showToast(`Création échouée : ${res.error || 'erreur inconnue'}`)
+      showToast(`${t('fileTree.createFailed')} : ${res.error || 'erreur inconnue'}`)
       return
     }
     await loadTree()
     setActivePath(fullPath)
     onSelect(fullPath)
-    showToast(`"${fileName}" créé`, 'success')
+    showToast(t('fileTree.created', { name: fileName }), 'success')
   }
 
   // Create a new folder at a given directory path (empty string = root)
   const handleNewFolder = async (dirPath: string = '') => {
-    const raw = prompt('Nom du nouveau dossier (ex: B2)')
+    const raw = prompt(t('fileTree.newFolderPrompt'))
     if (!raw) return
     const sanitized = sanitizeFilename(raw)
     if (!sanitized) {
-      showToast('Nom invalide après nettoyage.')
+      showToast(t('fileTree.invalidName'))
       return
     }
     const fullPath = dirPath ? `${dirPath}/${sanitized}` : sanitized
@@ -105,16 +107,18 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
       return
     }
     if (!res.ok) {
-      showToast(`Création dossier échouée : ${res.error || 'erreur inconnue'}`)
+      showToast(`${t('fileTree.folderCreateFailed')} : ${res.error || 'erreur inconnue'}`)
       return
     }
     await loadTree()
-    showToast(`Dossier "${sanitized}" créé`, 'success')
+    showToast(t('fileTree.folderCreated', { name: sanitized }), 'success')
   }
 
   const handleDelete = async (node: FileNode) => {
-    const label = node.isDir ? `le dossier "${node.name}" et tout son contenu` : `"${node.name}"`
-    const confirmed = confirm(`Supprimer ${label} ?`)
+    const msg = node.isDir
+      ? t('fileTree.deleteConfirmFolder', { name: node.name })
+      : t('fileTree.deleteConfirmFile', { name: node.name })
+    const confirmed = confirm(msg)
     if (!confirmed) return
     const res = await request(`/api/file?path=${encodeURIComponent(node.path)}`, {
       method: 'DELETE',
@@ -124,10 +128,10 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
       return
     }
     if (!res.ok) {
-      showToast(`Suppression échouée : ${res.error || 'erreur inconnue'}`)
+      showToast(`${t('fileTree.deleteFailed')} : ${res.error || 'erreur inconnue'}`)
       return
     }
-    showToast(`"${node.name}" supprimé`, 'success')
+    showToast(t('fileTree.deleted', { name: node.name }), 'success')
     if (activePath === node.path || (node.isDir && activePath?.startsWith(node.path + '/'))) {
       setActivePath(null)
     }
@@ -137,15 +141,15 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
 
   const handleRename = async (node: FileNode) => {
     const currentName = node.isDir ? node.name : node.name.replace(/\.md$/i, '')
-    const raw = prompt('Nouveau nom :', currentName)
+    const raw = prompt(t('fileTree.renamePrompt'), currentName)
     if (!raw) return
     if (raw.trim() === currentName) {
-      showToast('Nom inchangé.', 'success')
+      showToast(t('fileTree.unchanged'), 'success')
       return
     }
     const sanitized = sanitizeFilename(node.isDir ? raw : raw.replace(/\.md$/i, ''))
     if (!sanitized) {
-      showToast('Nom invalide après nettoyage.')
+      showToast(t('fileTree.invalidName'))
       return
     }
     const ext = (!node.isDir && node.name.endsWith('.md')) ? '.md' : ''
@@ -153,7 +157,7 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
     const dir = node.path.includes('/') ? node.path.substring(0, node.path.lastIndexOf('/') + 1) : ''
     const newPath = dir + newName
     if (newPath === node.path) {
-      showToast('Le nom est déjà le même.', 'success')
+      showToast(t('fileTree.alreadySame'), 'success')
       return
     }
     const res = await postJSON('/api/files/rename', { from: node.path, to: newPath })
@@ -162,14 +166,13 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
       return
     }
     if (!res.ok) {
-      showToast(`Renommage échoué : ${res.error || 'erreur inconnue'}`)
+      showToast(`${t('fileTree.renameFailed')} : ${res.error || 'erreur inconnue'}`)
       return
     }
-    showToast(`Renommé → "${newName}"`, 'success')
+    showToast(t('fileTree.renamed', { name: newName }), 'success')
     if (activePath === node.path) {
       setActivePath(newPath)
     } else if (node.isDir && activePath?.startsWith(node.path + '/')) {
-      // Update active path if it was inside the renamed folder
       setActivePath(activePath.replace(node.path, newPath))
     }
     onRefresh()
@@ -179,10 +182,10 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
   return (
     <div className="file-tree">
       <div className="file-tree-header">
-        <h2>Mes cours</h2>
+        <h2>{t('fileTree.title')}</h2>
         <div className="file-tree-header-actions">
-          <button onClick={() => handleNewFolder('')} title="Nouveau dossier">📁+</button>
-          <button onClick={() => handleNewFile('')} title="Nouveau cours">📄+</button>
+          <button onClick={() => handleNewFolder('')} title={t('fileTree.newFolder')}>📁+</button>
+          <button onClick={() => handleNewFile('')} title={t('fileTree.newFile')}>📄+</button>
         </div>
       </div>
 
@@ -199,7 +202,7 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
 
       {tree.length === 0 && (
         <div style={{ padding: '8px', fontSize: '12px', color: 'var(--text-muted)' }}>
-          Aucun cours. Cliquez sur "📄+" pour créer un cours ou "📁+" pour créer un dossier.
+          {t('fileTree.empty')}
         </div>
       )}
       <div className="file-tree-list">
@@ -222,7 +225,7 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
           target="_blank"
           rel="noopener noreferrer"
         >
-          📎 Voir les fichiers de Lya (hack temporaire)
+          {t('fileTree.lyaLink')}
         </a>
       </div>
       <div className="file-tree-version" title={`Version ${__APP_VERSION__}`}>
@@ -249,6 +252,7 @@ function TreeNode({
   onNewFile: (dirPath: string) => void
   onNewFolder: (dirPath: string) => void
 }) {
+  const { t } = useI18n()
   const [expanded, setExpanded] = useState(true)
 
   const handleClick = () => {
@@ -275,14 +279,14 @@ function TreeNode({
               <button
                 className="file-action-btn"
                 onClick={() => onNewFile(node.path)}
-                title="Nouveau cours ici"
+                title={t('fileTree.newFileHere')}
               >
                 📄+
               </button>
               <button
                 className="file-action-btn"
                 onClick={() => onNewFolder(node.path)}
-                title="Nouveau sous-dossier"
+                title={t('fileTree.newSubfolder')}
               >
                 📁+
               </button>
@@ -291,14 +295,14 @@ function TreeNode({
           <button
             className="file-action-btn"
             onClick={() => onRename(node)}
-            title="Renommer"
+            title={t('fileTree.rename')}
           >
             ✏️
           </button>
           <button
             className="file-action-btn"
             onClick={() => onDelete(node)}
-            title="Supprimer"
+            title={t('fileTree.delete')}
           >
             🗑️
           </button>
@@ -309,7 +313,7 @@ function TreeNode({
           {node.children.length === 0 && (
             <div className="file-tree-empty-folder">
               <span style={{ fontSize: '11px', color: 'var(--text-muted)', padding: '4px 8px' }}>
-                Dossier vide
+                {t('fileTree.emptyFolder')}
               </span>
             </div>
           )}

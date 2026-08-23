@@ -1,0 +1,85 @@
+{
+  "app": {
+    "title": "📚 Teaching Assistant"
+  },
+  "toolbar": {
+    "niveau": "Level:",
+    "seconde": "Year 10",
+    "premiere": "Year 11",
+    "terminale": "Year 12",
+    "programme": "📋 Curriculum",
+    "exportPdf": "📄 PDF",
+    "exportDocx": "📄 DOCX",
+    "noFile": "No file selected",
+    "lang": "🌐"
+  },
+  "fileTree": {
+    "title": "My lessons",
+    "empty": "No lessons. Click \"📄+\" to create a lesson or \"📁+\" to create a folder.",
+    "newFilePrompt": "New lesson name (e.g. unit7)",
+    "newFolderPrompt": "New folder name (e.g. B2)",
+    "invalidName": "Invalid name after sanitization.",
+    "createFailed": "Creation failed",
+    "folderCreateFailed": "Folder creation failed",
+    "deleteFailed": "Deletion failed",
+    "renameFailed": "Rename failed",
+    "deleteConfirmFile": "Delete \"{name}\"?",
+    "deleteConfirmFolder": "Delete folder \"{name}\" and all its contents?",
+    "renamePrompt": "New name:",
+    "unchanged": "Name unchanged.",
+    "alreadySame": "Name is already the same.",
+    "created": "\"{name}\" created",
+    "folderCreated": "Folder \"{name}\" created",
+    "deleted": "\"{name}\" deleted",
+    "renamed": "Renamed → \"{name}\"",
+    "emptyFolder": "Empty folder",
+    "lyaLink": "📎 View Lya's files (temporary hack)",
+    "newFile": "New lesson",
+    "newFolder": "New folder",
+    "newFileHere": "New lesson here",
+    "newSubfolder": "New subfolder",
+    "rename": "Rename",
+    "delete": "Delete"
+  },
+  "editor": {
+    "empty": "Select a file to edit",
+    "unsaved": "Unsaved",
+    "saving": "Saving…",
+    "saved": "Saved",
+    "error": "Save error"
+  },
+  "chat": {
+    "title": "💬 AI Assistant",
+    "reconnecting": "(reconnecting…)",
+    "expired": "(session expired)",
+    "placeholder": "Ask the AI...",
+    "send": "Send",
+    "sending": "...",
+    "insert": "📝 Insert into lesson",
+    "copy": "📋 Copy",
+    "streaming": "⏳ generating...",
+    "emptyHint": "Ask a question or request the AI to generate content for your lesson.",
+    "examples": "Examples:",
+    "example1": "\"Generate 5 gap-fill exercises on the present perfect, B1 level\"",
+    "example2": "\"Rephrase this paragraph for {niveau} students\"",
+    "example3": "\"Does this lesson meet axis 4 of the curriculum?\"",
+    "example4": "\"Suggest a sequence plan on the Commonwealth axis\""
+  },
+  "programme": {
+    "title": "Official Curriculum",
+    "loading": "Loading curriculum…",
+    "header": "📋 Curriculum — {niveau}",
+    "axes": "Cultural axes ({count}/{total} required)",
+    "axesNote": "{note}",
+    "obligatoire": "⭐ REQUIRED",
+    "competences": "Language skills",
+    "grammaire": "Grammar ({count} points)",
+    "vocabulaire": "Thematic vocabulary"
+  },
+  "mobile": {
+    "files": "Files",
+    "editor": "Editor",
+    "ia": "AI",
+    "programme": "Curriculum"
+  }
+}
