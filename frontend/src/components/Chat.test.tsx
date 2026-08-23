@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { renderWithI18n } from '../test/i18n-wrapper'
 import Chat from './Chat'
 
 describe('Chat', () => {
@@ -16,7 +17,7 @@ describe('Chat', () => {
 
   // Helper: render Chat and wait for WebSocket to connect
   async function renderConnected(props?: { currentFile?: string | null }) {
-    const result = render(
+    const result = renderWithI18n(
       <Chat {...defaultProps} currentFile={props?.currentFile ?? null} />
     )
     // Wait for the mock WebSocket onopen (setTimeout 0) to fire
@@ -27,12 +28,12 @@ describe('Chat', () => {
   }
 
   it('renders the chat header', () => {
-    render(<Chat {...defaultProps} />)
+    renderWithI18n(<Chat {...defaultProps} />)
     expect(screen.getByText(/Assistant IA/)).toBeInTheDocument()
   })
 
   it('shows example prompts when empty', () => {
-    render(<Chat {...defaultProps} />)
+    renderWithI18n(<Chat {...defaultProps} />)
     expect(screen.getByText(/Posez une question/)).toBeInTheDocument()
   })
 
@@ -107,7 +108,7 @@ describe('Chat', () => {
       grammaire: [],
       vocabulaire_thematique: {},
     }
-    render(<Chat {...defaultProps} programme={programme} />)
+    renderWithI18n(<Chat {...defaultProps} programme={programme} />)
     expect(screen.getByText('Seconde — B1+')).toBeInTheDocument()
   })
 })

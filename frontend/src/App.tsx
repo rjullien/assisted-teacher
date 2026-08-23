@@ -85,9 +85,14 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     async function fetchProgramme() {
-      const res = await getJSON<ProgrammeData>(`/api/programme?niveau=${niveau}`)
-      if (!cancelled && res.ok && res.data) {
-        setProgramme(res.data)
+      setProgramme(null) // show loading state on niveau switch
+      try {
+        const res = await getJSON<ProgrammeData>(`/api/programme?niveau=${niveau}`)
+        if (!cancelled && res.ok && res.data) {
+          setProgramme(res.data)
+        }
+      } catch {
+        // Silently fail — programme stays null, panel shows loading
       }
     }
     fetchProgramme()

@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
+import { renderWithI18n } from '../test/i18n-wrapper'
 import Editor from './Editor'
 
 // Mock Milkdown — ProseMirror requires a full browser DOM that jsdom doesn't provide.
@@ -36,32 +37,32 @@ describe('Editor', () => {
   }
 
   it('shows empty state when no file selected', () => {
-    render(<Editor {...defaultProps} />)
-    expect(screen.getByText(/Sélectionnez un cours/)).toBeInTheDocument()
+    renderWithI18n(<Editor {...defaultProps} />)
+    expect(screen.getByText(/Sélectionnez un fichier/)).toBeInTheDocument()
   })
 
   it('shows file path in header when file is selected', () => {
-    render(<Editor {...defaultProps} content="# Test" lastSavedContent="# Test" filePath="B1/unit5.md" />)
+    renderWithI18n(<Editor {...defaultProps} content="# Test" lastSavedContent="# Test" filePath="B1/unit5.md" />)
     expect(screen.getByText('B1/unit5.md')).toBeInTheDocument()
   })
 
   it('renders Milkdown WYSIWYG editor when file is selected', () => {
-    render(<Editor {...defaultProps} content="# Test" lastSavedContent="# Test" filePath="B1/unit5.md" />)
+    renderWithI18n(<Editor {...defaultProps} content="# Test" lastSavedContent="# Test" filePath="B1/unit5.md" />)
     expect(screen.getByTestId('milkdown-editor')).toBeInTheDocument()
   })
 
   it('does not render Milkdown when no file is selected', () => {
-    render(<Editor {...defaultProps} />)
+    renderWithI18n(<Editor {...defaultProps} />)
     expect(screen.queryByTestId('milkdown-editor')).not.toBeInTheDocument()
   })
 
   it('shows unsaved indicator when content differs from lastSavedContent', () => {
-    render(<Editor {...defaultProps} content="modified" lastSavedContent="original" filePath="test.md" />)
+    renderWithI18n(<Editor {...defaultProps} content="modified" lastSavedContent="original" filePath="test.md" />)
     expect(screen.getByText(/Non sauvegardé/)).toBeInTheDocument()
   })
 
   it('does not show indicator when content matches lastSavedContent', () => {
-    render(<Editor {...defaultProps} content="same" lastSavedContent="same" filePath="test.md" />)
+    renderWithI18n(<Editor {...defaultProps} content="same" lastSavedContent="same" filePath="test.md" />)
     expect(screen.queryByText(/Non sauvegardé/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Sauvegardé/)).not.toBeInTheDocument()
   })

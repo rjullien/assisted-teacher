@@ -1,5 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
+import { renderWithI18n } from '../test/i18n-wrapper'
 import Toolbar from './Toolbar'
 
 describe('Toolbar', () => {
@@ -15,52 +16,52 @@ describe('Toolbar', () => {
   }
 
   it('renders the app title', () => {
-    render(<Toolbar {...defaultProps} />)
+    renderWithI18n(<Toolbar {...defaultProps} />)
     expect(screen.getByText('📚 Assistant Pédagogique')).toBeInTheDocument()
   })
 
   it('shows "Aucun fichier" when no file selected', () => {
-    render(<Toolbar {...defaultProps} />)
+    renderWithI18n(<Toolbar {...defaultProps} />)
     expect(screen.getByText('Aucun fichier sélectionné')).toBeInTheDocument()
   })
 
   it('shows current file name when selected', () => {
-    render(<Toolbar {...defaultProps} currentFile="B1/unit5.md" />)
+    renderWithI18n(<Toolbar {...defaultProps} currentFile="B1/unit5.md" />)
     expect(screen.getByText('B1/unit5.md')).toBeInTheDocument()
   })
 
   it('hides export buttons when no file selected', () => {
-    render(<Toolbar {...defaultProps} />)
+    renderWithI18n(<Toolbar {...defaultProps} />)
     expect(screen.queryByText('📄 PDF')).not.toBeInTheDocument()
     expect(screen.queryByText('📄 DOCX')).not.toBeInTheDocument()
   })
 
   it('shows export buttons when file is selected', () => {
-    render(<Toolbar {...defaultProps} currentFile="B1/unit5.md" />)
+    renderWithI18n(<Toolbar {...defaultProps} currentFile="B1/unit5.md" />)
     expect(screen.getByText('📄 PDF')).toBeInTheDocument()
     expect(screen.getByText('📄 DOCX')).toBeInTheDocument()
   })
 
   it('calls onExportPDF when PDF button clicked', () => {
-    render(<Toolbar {...defaultProps} currentFile="B1/unit5.md" />)
+    renderWithI18n(<Toolbar {...defaultProps} currentFile="B1/unit5.md" />)
     fireEvent.click(screen.getByText('📄 PDF'))
     expect(mockExportPDF).toHaveBeenCalledTimes(1)
   })
 
   it('calls onExportDOCX when DOCX button clicked', () => {
-    render(<Toolbar {...defaultProps} currentFile="B1/unit5.md" />)
+    renderWithI18n(<Toolbar {...defaultProps} currentFile="B1/unit5.md" />)
     fireEvent.click(screen.getByText('📄 DOCX'))
     expect(mockExportDOCX).toHaveBeenCalledTimes(1)
   })
 
   it('renders the niveau selector with correct default', () => {
-    render(<Toolbar {...defaultProps} niveau="premiere" />)
+    renderWithI18n(<Toolbar {...defaultProps} niveau="premiere" />)
     const select = screen.getByLabelText('Niveau :') as HTMLSelectElement
     expect(select.value).toBe('premiere')
   })
 
   it('calls onNiveauChange when niveau is changed', () => {
-    render(<Toolbar {...defaultProps} />)
+    renderWithI18n(<Toolbar {...defaultProps} />)
     const select = screen.getByLabelText('Niveau :')
     fireEvent.change(select, { target: { value: 'terminale' } })
     expect(mockNiveauChange).toHaveBeenCalledWith('terminale')

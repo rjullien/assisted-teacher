@@ -1,5 +1,6 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { screen, waitFor, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { renderWithI18n } from '../test/i18n-wrapper'
 import FileTree from './FileTree'
 
 const mockTree = [
@@ -65,12 +66,12 @@ describe('FileTree', () => {
   })
 
   it('renders the header', async () => {
-    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+    renderWithI18n(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
     expect(screen.getByText('Mes cours')).toBeInTheDocument()
   })
 
   it('fetches and displays file tree', async () => {
-    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+    renderWithI18n(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
 
     await waitFor(() => {
       expect(screen.getByText('B1')).toBeInTheDocument()
@@ -83,7 +84,7 @@ describe('FileTree', () => {
   })
 
   it('calls onSelect when clicking a file', async () => {
-    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+    renderWithI18n(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
 
     await waitFor(() => {
       expect(screen.getByText('unit5.md')).toBeInTheDocument()
@@ -94,7 +95,7 @@ describe('FileTree', () => {
   })
 
   it('does NOT call onSelect when clicking a directory', async () => {
-    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+    renderWithI18n(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
 
     await waitFor(() => {
       expect(screen.getByText('B1')).toBeInTheDocument()
@@ -105,7 +106,7 @@ describe('FileTree', () => {
   })
 
   it('collapses and expands directories on click', async () => {
-    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+    renderWithI18n(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
 
     await waitFor(() => {
       expect(screen.getByText('unit5.md')).toBeInTheDocument()
@@ -127,7 +128,7 @@ describe('FileTree', () => {
       mockJsonResponse([])
     )
 
-    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+    renderWithI18n(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
 
     await waitFor(() => {
       expect(screen.getByText(/Aucun cours/)).toBeInTheDocument()
@@ -135,7 +136,7 @@ describe('FileTree', () => {
   })
 
   it('has new file and new folder buttons in header', async () => {
-    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+    renderWithI18n(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
     // Header buttons for creating at root
     const newFileButtons = screen.getAllByTitle('Nouveau cours')
     expect(newFileButtons.length).toBeGreaterThanOrEqual(1)
@@ -144,7 +145,7 @@ describe('FileTree', () => {
   })
 
   it('shows folder actions (new file, new folder, rename, delete) on directories', async () => {
-    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+    renderWithI18n(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
 
     await waitFor(() => {
       expect(screen.getByText('B1')).toBeInTheDocument()
@@ -158,7 +159,7 @@ describe('FileTree', () => {
   })
 
   it('refetches when refreshKey changes', async () => {
-    const { rerender } = render(
+    const { rerender } = renderWithI18n(
       <FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />
     )
 
@@ -176,7 +177,7 @@ describe('FileTree', () => {
   it('handles fetch error gracefully', async () => {
     ;(globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Network error'))
 
-    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+    renderWithI18n(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
 
     await waitFor(() => {
       expect(screen.getByText('Mes cours')).toBeInTheDocument()
@@ -190,7 +191,7 @@ describe('FileTree', () => {
       .mockResolvedValueOnce(mockJsonResponse({ status: 'ok' })) // POST mkdir
       .mockResolvedValueOnce(mockJsonResponse(mockTree)) // reload after create
 
-    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+    renderWithI18n(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
 
     await waitFor(() => {
       expect(screen.getAllByTitle('Nouveau dossier').length).toBeGreaterThanOrEqual(1)
@@ -213,7 +214,7 @@ describe('FileTree', () => {
       .mockResolvedValueOnce(mockTextResponse('ok'))     // PUT file
       .mockResolvedValueOnce(mockJsonResponse(mockTree)) // reload after create
 
-    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+    renderWithI18n(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
 
     await waitFor(() => {
       expect(screen.getAllByTitle('Nouveau cours').length).toBeGreaterThanOrEqual(1)
