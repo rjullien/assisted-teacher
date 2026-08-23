@@ -639,3 +639,176 @@ body {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+
+
+
+/* ============================================
+   MOBILE LAYOUT
+   ============================================ */
+
+.app--mobile {
+  height: 100vh;
+  height: 100dvh; /* dynamic viewport height for mobile browsers */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app--mobile .toolbar {
+  padding: 6px 12px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.app--mobile .toolbar h1 {
+  font-size: 14px;
+}
+
+.app--mobile .toolbar .current-file {
+  display: none;
+}
+
+.app--mobile .toolbar-niveau select {
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
+.app--mobile .toolbar-niveau label {
+  display: none;
+}
+
+.mobile-layout {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.mobile-content {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Make panels fill the mobile content area */
+.mobile-content > .file-tree,
+.mobile-content > .editor-panel,
+.mobile-content > .chat-panel {
+  height: 100%;
+  border: none;
+}
+
+.mobile-content > .file-tree {
+  border-right: none;
+}
+
+.mobile-content > .chat-panel {
+  border-left: none;
+}
+
+/* Mobile editor adjustments */
+.mobile-content .milkdown-wrapper {
+  padding: 16px;
+}
+
+.mobile-content .milkdown-wrapper .ProseMirror {
+  font-size: 14px;
+  max-width: 100%;
+}
+
+.mobile-content .editor-header {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+/* Mobile chat adjustments */
+.mobile-content .chat-header {
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.mobile-content .chat-messages {
+  padding: 12px;
+}
+
+.mobile-content .chat-input {
+  padding: 8px 12px;
+}
+
+.mobile-content .chat-input textarea {
+  font-size: 14px; /* prevent iOS zoom */
+  min-height: 38px;
+}
+
+/* ---- Bottom Tab Bar ---- */
+
+.mobile-tab-bar {
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.mobile-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  color: var(--text-muted);
+  transition: color 0.15s, background 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-tab:active {
+  background: var(--bg-tertiary);
+}
+
+.mobile-tab.active {
+  color: var(--accent);
+}
+
+.mobile-tab-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.mobile-tab-label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.mobile-tab-dot {
+  position: absolute;
+  top: 6px;
+  right: calc(50% - 16px);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* ============================================
+   RESPONSIVE TWEAKS (for in-between sizes)
+   ============================================ */
+
+@media (max-width: 767px) {
+  body {
+    overflow: hidden;
+  }
+
+  /* Hide allotment resize handles if somehow visible */
+  .split-view-view .sash-container {
+    display: none !important;
+  }
+}
