@@ -16,6 +16,7 @@ import (
 func main() {
 	port := flag.String("port", envOr("PORT", "9847"), "HTTP port")
 	workDir := flag.String("workdir", envOr("WORKSPACE_DIR", "./workspace"), "Workspace directory for course files")
+	programmesDir := flag.String("programmes-dir", envOr("PROGRAMMES_DIR", ""), "Directory for programme JSON files (defaults to WORKSPACE_DIR/.programmes)")
 	hermesURL := flag.String("hermes-url", envOr("HERMES_URL", "http://hermes-lya.openclaw.svc.cluster.local:8642"), "Hermes API server URL")
 	hermesKey := flag.String("hermes-key", strings.TrimSpace(envOr("HERMES_API_KEY", "")), "Hermes API server key")
 	flag.Parse()
@@ -23,6 +24,12 @@ func main() {
 	// Ensure workspace exists
 	if err := os.MkdirAll(*workDir, 0755); err != nil {
 		log.Fatalf("cannot create workspace dir: %v", err)
+	}
+
+	// Determine programmes directory
+	progDir := *programmesDir
+	if progDir == "" {
+		progDir = *workDir // fallback: handler will look in workDir/.programmes/
 	}
 
 	mux := http.NewServeMux()
@@ -37,7 +44,7 @@ func main() {
 	mux.HandleFunc("POST /api/files/rename", fileAPI.Rename)
 
 	// Programme API (official curriculum data)
-	progAPI := api.NewProgrammeHandler(*workDir)
+	progAPI := api.NewProgrammeHandler(progDir)
 	mux.HandleFunc("GET /api/programmes", progAPI.ListProgrammes)
 	mux.HandleFunc("GET /api/programme", progAPI.GetProgramme)
 

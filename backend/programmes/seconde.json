@@ -1,0 +1,149 @@
+{
+  "niveau": "Seconde",
+  "cecrl": {
+    "LVA": "B1+",
+    "LVB": "A2+",
+    "LVC": "A1/A2"
+  },
+  "axes_culturels": [
+    {
+      "numero": 1,
+      "titre": "Représentation de soi et rapport à autrui",
+      "description": "L'expression de l'identité personnelle et la construction du rapport à l'autre dans les sociétés anglophones.",
+      "exemples_objets_etude": [
+        "Autobiographies et journaux intimes",
+        "Identités numériques et réseaux sociaux",
+        "Stéréotypes et préjugés culturels",
+        "Rites de passage (prom, gap year)"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 2,
+      "titre": "Vivre entre générations",
+      "description": "Les relations intergénérationnelles, la transmission, les conflits et solidarités entre générations dans le monde anglophone.",
+      "exemples_objets_etude": [
+        "Famille traditionnelle et familles recomposées",
+        "Héritage culturel et transmission orale",
+        "Conflits générationnels (baby boomers vs Gen Z)",
+        "Le vieillissement et la place des aînés"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 3,
+      "titre": "Le passé dans le présent",
+      "description": "Comment le passé (historique, mémoriel, patrimonial) influence et éclaire le présent dans les sociétés anglophones.",
+      "exemples_objets_etude": [
+        "Monuments et lieux de mémoire",
+        "Mouvements des droits civiques et leur héritage",
+        "Colonisation et décolonisation",
+        "Réécritures de l'histoire (films, romans)"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 4,
+      "titre": "Défis et transitions",
+      "description": "Les grands défis contemporains et les transitions (écologiques, technologiques, sociétales) auxquels font face les sociétés anglophones.",
+      "exemples_objets_etude": [
+        "Changement climatique et engagement citoyen",
+        "Transition numérique et intelligence artificielle",
+        "Migrations et mobilités",
+        "Urbanisation et nouvelles formes de vie en communauté"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 5,
+      "titre": "Créer et recréer",
+      "description": "La création artistique, littéraire et culturelle comme moyen d'expression et de transformation dans le monde anglophone.",
+      "exemples_objets_etude": [
+        "Street art et art engagé",
+        "Fan fiction et cultures participatives",
+        "Adaptations littéraires (du roman au film)",
+        "Musique et mouvements culturels (hip-hop, punk, grime)"
+      ],
+      "obligatoire": false
+    },
+    {
+      "numero": 6,
+      "titre": "Commonwealth",
+      "description": "Étude des pays du Commonwealth : diversité culturelle, liens historiques, enjeux contemporains. Axe obligatoire permettant d'ouvrir sur la diversité du monde anglophone au-delà du Royaume-Uni et des États-Unis.",
+      "exemples_objets_etude": [
+        "L'Inde anglophone (Bollywood, littérature)",
+        "L'Australie et les peuples premiers",
+        "Le Canada multiculturel",
+        "L'Afrique du Sud post-apartheid",
+        "Les Jeux du Commonwealth"
+      ],
+      "obligatoire": true
+    }
+  ],
+  "contraintes": {
+    "axes_a_traiter": 5,
+    "axes_total": 6,
+    "axe_obligatoire": 6,
+    "note": "5 axes sur 6 doivent être traités dans l'année, dont l'axe 6 (Commonwealth) obligatoirement."
+  },
+  "competences": {
+    "comprehension_orale": {
+      "code": "CO",
+      "descripteur": "Comprendre l'essentiel de messages oraux élaborés (conversations, émissions radio/TV, exposés) sur des sujets familiers ou d'intérêt personnel.",
+      "niveau_attendu_LVA": "B1+",
+      "niveau_attendu_LVB": "A2+"
+    },
+    "comprehension_ecrite": {
+      "code": "CE",
+      "descripteur": "Comprendre des textes rédigés dans une langue courante sur des sujets relatifs à la vie quotidienne, à l'actualité ou au domaine d'étude.",
+      "niveau_attendu_LVA": "B1+",
+      "niveau_attendu_LVB": "A2+"
+    },
+    "expression_orale": {
+      "code": "EO",
+      "descripteur": "S'exprimer de manière claire sur des sujets familiers, raconter un événement, décrire un espoir, donner brièvement des raisons et explications.",
+      "niveau_attendu_LVA": "B1+",
+      "niveau_attendu_LVB": "A2+"
+    },
+    "expression_ecrite": {
+      "code": "EE",
+      "descripteur": "Écrire un texte simple et cohérent sur des sujets familiers, des lettres personnelles décrivant expériences et impressions.",
+      "niveau_attendu_LVA": "B1+",
+      "niveau_attendu_LVB": "A2+"
+    },
+    "interaction": {
+      "code": "IO",
+      "descripteur": "Faire face à la majorité des situations de la vie courante, prendre part sans préparation à une conversation sur des sujets familiers.",
+      "niveau_attendu_LVA": "B1+",
+      "niveau_attendu_LVB": "A2+"
+    },
+    "mediation": {
+      "code": "MED",
+      "descripteur": "Reformuler, expliquer ou résumer un texte ou un propos pour un tiers, faciliter la compréhension interculturelle.",
+      "niveau_attendu_LVA": "B1",
+      "niveau_attendu_LVB": "A2"
+    }
+  },
+  "grammaire": [
+    "Present simple et present continuous (révision et approfondissement)",
+    "Past simple et past continuous",
+    "Present perfect simple (for, since, already, yet, just)",
+    "Future (will, be going to, present continuous à valeur de futur)",
+    "Modaux (can, could, must, should, may, might)",
+    "Comparatifs et superlatifs",
+    "Relatives (who, which, that, whose, where)",
+    "Discours indirect (said that, told me that)",
+    "Voix passive (present et past)",
+    "Conditionnel type 1 et 2 (if + present / will ; if + past / would)",
+    "Quantifieurs (some, any, no, every + composés)",
+    "Connecteurs logiques (however, therefore, although, moreover)"
+  ],
+  "vocabulaire_thematique": {
+    "axe_1_representation_de_soi": ["identity", "self-image", "appearance", "personality traits", "feelings", "relationships", "social media", "profile", "influence", "diversity"],
+    "axe_2_vivre_entre_generations": ["generation gap", "heritage", "tradition", "upbringing", "elderly", "youth", "inheritance", "family bonds", "values", "conflict"],
+    "axe_3_passe_dans_present": ["memory", "monument", "commemoration", "legacy", "civil rights", "colony", "independence", "heritage site", "ancestors", "slavery"],
+    "axe_4_defis_et_transitions": ["climate change", "sustainability", "renewable energy", "migration", "digital revolution", "artificial intelligence", "challenge", "transition", "urbanisation", "community"],
+    "axe_5_creer_et_recreer": ["creativity", "artwork", "performance", "adaptation", "fiction", "genre", "lyrics", "exhibition", "graffiti", "remix"],
+    "axe_6_commonwealth": ["Commonwealth", "former colony", "multicultural", "indigenous", "cricket", "Bollywood", "maple leaf", "apartheid", "diversity", "unity"]
+  }
+}

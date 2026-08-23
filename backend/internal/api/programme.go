@@ -35,11 +35,17 @@ func (h *ProgrammeHandler) GetProgramme(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	filePath := filepath.Join(h.workDir, ".programmes", niveau+".json")
+	// Try direct path first (PROGRAMMES_DIR points directly to the folder with JSON files)
+	filePath := filepath.Join(h.workDir, niveau+".json")
 	content, err := os.ReadFile(filePath)
 	if err != nil {
-		httpError(w, http.StatusNotFound, "programme file not found for niveau: %s", niveau)
-		return
+		// Fallback: try .programmes/ subdirectory (legacy layout where workDir is the workspace root)
+		filePath = filepath.Join(h.workDir, ".programmes", niveau+".json")
+		content, err = os.ReadFile(filePath)
+		if err != nil {
+			httpError(w, http.StatusNotFound, "programme file not found for niveau: %s", niveau)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
