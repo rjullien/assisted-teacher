@@ -655,26 +655,57 @@ body {
 }
 
 .app--mobile .toolbar {
-  padding: 6px 12px;
-  gap: 8px;
+  padding: 8px 12px;
+  gap: 10px;
   flex-shrink: 0;
+  min-height: 44px;
+  border-bottom: 2px solid var(--accent);
 }
 
 .app--mobile .toolbar h1 {
-  font-size: 14px;
+  font-size: 16px;
+  flex: 0 0 auto;
+}
+
+/* On very small screens, hide the text part of the title — keep emoji */
+@media (max-width: 400px) {
+  .app--mobile .toolbar h1 {
+    font-size: 0;
+  }
+  .app--mobile .toolbar h1::before {
+    content: "📚";
+    font-size: 18px;
+  }
 }
 
 .app--mobile .toolbar .current-file {
   display: none;
 }
 
+.app--mobile .toolbar-niveau {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
 .app--mobile .toolbar-niveau select {
-  font-size: 12px;
-  padding: 3px 6px;
+  font-size: 14px;
+  padding: 6px 10px;
+  font-weight: 600;
+  background: var(--accent-light);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--accent);
 }
 
 .app--mobile .toolbar-niveau label {
   display: none;
+}
+
+.app--mobile .toolbar-lang-toggle {
+  font-size: 11px;
+  padding: 4px 8px;
 }
 
 .mobile-layout {
@@ -1258,4 +1289,12 @@ body {
 .programme-retry-btn:hover {
   background: var(--accent);
   color: white;
+}
+
+
+
+/* Hide export buttons on mobile — too much clutter in toolbar */
+.app--mobile .toolbar button[title="Export PDF"],
+.app--mobile .toolbar button[title="Export DOCX"] {
+  display: none;
 }
