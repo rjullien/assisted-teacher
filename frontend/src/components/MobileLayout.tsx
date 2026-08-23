@@ -39,6 +39,8 @@ interface MobileLayoutProps {
   lastSavedContent: string
   refreshKey: number
   programme: ProgrammeData | null
+  programmeError?: boolean
+  onRetryProgramme?: () => void
   onFileSelect: (path: string) => void
   onFileTreeRefresh: () => void
   onFileContentChange: (content: string) => void
@@ -53,6 +55,8 @@ export default function MobileLayout({
   lastSavedContent,
   refreshKey,
   programme,
+  programmeError,
+  onRetryProgramme,
   onFileSelect,
   onFileTreeRefresh,
   onFileContentChange,
@@ -101,7 +105,7 @@ export default function MobileLayout({
         )}
         {activeTab === 'programme' && (
           <div className="mobile-programme-wrapper">
-            <ProgrammePanel programme={programme} />
+            <ProgrammePanel programme={programme} error={programmeError} onRetry={onRetryProgramme} />
           </div>
         )}
       </div>

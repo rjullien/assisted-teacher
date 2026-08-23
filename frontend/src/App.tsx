@@ -66,6 +66,7 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [niveau, setNiveau] = useState<Niveau>(loadNiveau)
   const [programme, setProgramme] = useState<ProgrammeData | null>(null)
+  const [programmeError, setProgrammeError] = useState(false)
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false)
   const flushRef = useRef<(() => Promise<void>) | null>(null)
 
@@ -82,22 +83,25 @@ export default function App() {
   }), [locale, handleSetLocale])
 
   // Fetch programme data when niveau changes
-  useEffect(() => {
-    let cancelled = false
-    async function fetchProgramme() {
-      setProgramme(null) // show loading state on niveau switch
-      try {
-        const res = await getJSON<ProgrammeData>(`/api/programme?niveau=${niveau}`)
-        if (!cancelled && res.ok && res.data) {
-          setProgramme(res.data)
-        }
-      } catch {
-        // Silently fail — programme stays null, panel shows loading
+  const fetchProgramme = useCallback(async (niv: string) => {
+    setProgramme(null)
+    setProgrammeError(false)
+    try {
+      const res = await getJSON<ProgrammeData>(`/api/programme?niveau=${niv}`)
+      if (res.ok && res.data) {
+        setProgramme(res.data)
+        setProgrammeError(false)
+      } else {
+        setProgrammeError(true)
       }
+    } catch {
+      setProgrammeError(true)
     }
-    fetchProgramme()
-    return () => { cancelled = true }
-  }, [niveau])
+  }, [])
+
+  useEffect(() => {
+    fetchProgramme(niveau)
+  }, [niveau, fetchProgramme])
 
   const handleNiveauChange = useCallback((n: Niveau) => {
     setNiveau(n)
@@ -177,6 +181,8 @@ export default function App() {
             lastSavedContent={lastSavedContent}
             refreshKey={refreshKey}
             programme={programme}
+            programmeError={programmeError}
+            onRetryProgramme={() => fetchProgramme(niveau)}
             onFileSelect={handleFileSelect}
             onFileTreeRefresh={handleFileTreeRefresh}
             onFileContentChange={setFileContent}
@@ -232,6 +238,8 @@ export default function App() {
           open={programmeDrawerOpen}
           onClose={() => setProgrammeDrawerOpen(false)}
           programme={programme}
+          programmeError={programmeError}
+          onRetryProgramme={() => fetchProgramme(niveau)}
         />
       </div>
     </I18nContext.Provider>
