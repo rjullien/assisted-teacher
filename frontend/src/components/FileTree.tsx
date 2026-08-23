@@ -192,7 +192,9 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
           />
         ))}
       </div>
-      <div className="file-tree-version">{__APP_VERSION__}</div>
+      <div className="file-tree-version" title={__APP_VERSION__}>
+        {__APP_VERSION__.slice(0, 7)}
+      </div>
     </div>
   )
 }
