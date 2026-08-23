@@ -1,4 +1,11 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef } from 'react'
+import { Milkdown, MilkdownProvider, useEditor } from '@milkdown/react'
+import { Editor as MilkdownEditor } from '@milkdown/core'
+import { defaultValueCtx, rootCtx } from '@milkdown/core'
+import { commonmark } from '@milkdown/preset-commonmark'
+import { gfm } from '@milkdown/preset-gfm'
+import { history } from '@milkdown/plugin-history'
+import { listener, listenerCtx } from '@milkdown/plugin-listener'
 import { useAutoSave, type SaveStatus } from '../hooks/useAutoSave'
 
 interface EditorProps {
@@ -30,9 +37,31 @@ function SaveIndicator({ status }: { status: SaveStatus }) {
   )
 }
 
-export default function Editor({ content, lastSavedContent, onChange, onSave, onFlushRef, filePath }: EditorProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+// Inner Milkdown editor component
+function MilkdownEditorInner({ content, onChange }: { content: string; onChange: (md: string) => void }) {
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
 
+  useEditor((root) => {
+    return MilkdownEditor.make()
+      .config((ctx) => {
+        ctx.set(rootCtx, root)
+        ctx.set(defaultValueCtx, content)
+        ctx.get(listenerCtx)
+          .markdownUpdated((_ctx, markdown, _prevMarkdown) => {
+            onChangeRef.current(markdown)
+          })
+      })
+      .use(commonmark)
+      .use(gfm)
+      .use(history)
+      .use(listener)
+  }, [])
+
+  return <Milkdown />
+}
+
+export default function Editor({ content, lastSavedContent, onChange, onSave, onFlushRef, filePath }: EditorProps) {
   const { status, flush } = useAutoSave(content, lastSavedContent, onSave)
 
   // Expose flush to parent for use before file switching
@@ -47,18 +76,17 @@ export default function Editor({ content, lastSavedContent, onChange, onSave, on
     }
   }, [flush, onFlushRef])
 
-  // Auto-resize textarea
-  const autoResize = useCallback(() => {
-    const ta = textareaRef.current
-    if (ta) {
-      ta.style.height = 'auto'
-      ta.style.height = ta.scrollHeight + 'px'
-    }
-  }, [])
-
+  // Intercept Ctrl+S to prevent browser "Save As" dialog
   useEffect(() => {
-    autoResize()
-  }, [content, autoResize])
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault()
+        flush()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [flush])
 
   if (!filePath) {
     return (
@@ -76,18 +104,11 @@ export default function Editor({ content, lastSavedContent, onChange, onSave, on
         <span>{filePath}</span>
         <SaveIndicator status={status} />
       </div>
-      <div className="editor-content">
-        <textarea
-          ref={textareaRef}
-          className="editor-textarea"
-          value={content}
-          onChange={(e) => {
-            onChange(e.target.value)
-            autoResize()
-          }}
-          spellCheck
-          placeholder="Écrivez en Markdown..."
-        />
+      <div className="editor-content milkdown-wrapper">
+        {/* key forces remount when file changes so Milkdown reloads content */}
+        <MilkdownProvider key={filePath}>
+          <MilkdownEditorInner content={content} onChange={onChange} />
+        </MilkdownProvider>
       </div>
     </div>
   )
