@@ -1,6 +1,28 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import Editor from './Editor'
+
+// Mock Milkdown — ProseMirror requires a full browser DOM that jsdom doesn't provide.
+vi.mock('@milkdown/react', () => ({
+  Milkdown: () => <div data-testid="milkdown-editor">Milkdown WYSIWYG Editor</div>,
+  MilkdownProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useEditor: () => ({ get: vi.fn(), loading: false }),
+}))
+
+vi.mock('@milkdown/core', () => ({
+  Editor: { make: vi.fn(() => ({ config: vi.fn().mockReturnThis(), use: vi.fn().mockReturnThis() })) },
+  defaultValueCtx: 'defaultValueCtx',
+  rootCtx: 'rootCtx',
+  editorViewCtx: 'editorViewCtx',
+}))
+
+vi.mock('@milkdown/preset-commonmark', () => ({ commonmark: [] }))
+vi.mock('@milkdown/preset-gfm', () => ({ gfm: [] }))
+vi.mock('@milkdown/plugin-history', () => ({ history: [] }))
+vi.mock('@milkdown/plugin-listener', () => ({
+  listener: [],
+  listenerCtx: 'listenerCtx',
+}))
 
 describe('Editor', () => {
   const mockOnChange = vi.fn()
@@ -23,28 +45,14 @@ describe('Editor', () => {
     expect(screen.getByText('B1/unit5.md')).toBeInTheDocument()
   })
 
-  it('does not show Ctrl+S hint (replaced by auto-save)', () => {
+  it('renders Milkdown WYSIWYG editor when file is selected', () => {
     render(<Editor {...defaultProps} content="# Test" lastSavedContent="# Test" filePath="B1/unit5.md" />)
-    expect(screen.queryByText(/Ctrl\+S/)).not.toBeInTheDocument()
+    expect(screen.getByTestId('milkdown-editor')).toBeInTheDocument()
   })
 
-  it('renders textarea with content when file is selected', () => {
-    render(<Editor {...defaultProps} content="# Test content" lastSavedContent="# Test content" filePath="B1/unit5.md" />)
-    const textarea = screen.getByPlaceholderText('Écrivez en Markdown...')
-    expect(textarea).toBeInTheDocument()
-    expect(textarea).toHaveValue('# Test content')
-  })
-
-  it('does not render textarea when no file is selected', () => {
+  it('does not render Milkdown when no file is selected', () => {
     render(<Editor {...defaultProps} />)
-    expect(screen.queryByPlaceholderText('Écrivez en Markdown...')).not.toBeInTheDocument()
-  })
-
-  it('calls onChange when user types', () => {
-    render(<Editor {...defaultProps} content="Hello" lastSavedContent="Hello" filePath="test.md" />)
-    const textarea = screen.getByPlaceholderText('Écrivez en Markdown...')
-    fireEvent.change(textarea, { target: { value: 'Hello world' } })
-    expect(mockOnChange).toHaveBeenCalledWith('Hello world')
+    expect(screen.queryByTestId('milkdown-editor')).not.toBeInTheDocument()
   })
 
   it('shows unsaved indicator when content differs from lastSavedContent', () => {
