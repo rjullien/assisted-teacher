@@ -180,16 +180,19 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
           Aucun cours. Cliquez sur "+ Nouveau".
         </div>
       )}
-      {tree.map((node) => (
-        <TreeNode
-          key={node.path}
-          node={node}
-          activePath={activePath}
-          onSelect={handleSelect}
-          onDelete={handleDelete}
-          onRename={handleRename}
-        />
-      ))}
+      <div className="file-tree-list">
+        {tree.map((node) => (
+          <TreeNode
+            key={node.path}
+            node={node}
+            activePath={activePath}
+            onSelect={handleSelect}
+            onDelete={handleDelete}
+            onRename={handleRename}
+          />
+        ))}
+      </div>
+      <div className="file-tree-version">{__APP_VERSION__}</div>
     </div>
   )
 }
