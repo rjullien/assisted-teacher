@@ -110,7 +110,18 @@ export async function request<T = unknown>(
 
 /** GET JSON (no cache — always fresh) */
 export async function getJSON<T = unknown>(path: string, timeoutMs?: number): Promise<ApiResponse<T>> {
-  return request<T>(path, { timeoutMs, cache: 'no-store' })
+  const res = await request<T>(path, { timeoutMs, cache: 'no-store' })
+  // If the response is "ok" but the data is a string (HTML page from Authelia redirect),
+  // treat it as an auth expiry. This happens when fetch follows a 302 to the login page.
+  if (res.ok && res.data !== null && typeof res.data === 'string') {
+    const text = res.data as unknown as string
+    if (/<!DOCTYPE|<html|authelia/i.test(text)) {
+      return { ok: false, status: 302, data: null, error: 'Session expirée (redirect Authelia)', authExpired: true }
+    }
+    // Non-HTML text where we expected JSON — treat as error
+    return { ok: false, status: res.status, data: null, error: 'Expected JSON, got text', authExpired: false }
+  }
+  return res
 }
 
 /** GET text (file content — no cache) */
