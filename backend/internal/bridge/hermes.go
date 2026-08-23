@@ -155,9 +155,16 @@ type HermesBridge struct {
 }
 
 func NewHermesBridge(hermesURL, apiKey string) *HermesBridge {
+	// TrimSpace is critical: Infisical/K8s secrets often carry a trailing \n,
+	// which makes the Bearer token mismatch on the gateway side.
+	key := strings.TrimSpace(apiKey)
+	if key != apiKey {
+		log.Printf("hermes: API key had %d surrounding whitespace byte(s) — trimmed", len(apiKey)-len(key))
+	}
+	log.Printf("hermes: bridge configured (url=%s, keyLen=%d)", hermesURL, len(key))
 	return &HermesBridge{
-		hermesURL: strings.TrimRight(hermesURL, "/"),
-		apiKey:    apiKey,
+		hermesURL: strings.TrimRight(strings.TrimSpace(hermesURL), "/"),
+		apiKey:    key,
 		hub:       NewHub(),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/rjullien/opencode-usage-tracker/cours-ia/backend/internal/api"
 	"github.com/rjullien/opencode-usage-tracker/cours-ia/backend/internal/bridge"
@@ -16,7 +17,7 @@ func main() {
 	port := flag.String("port", envOr("PORT", "9847"), "HTTP port")
 	workDir := flag.String("workdir", envOr("WORKSPACE_DIR", "./workspace"), "Workspace directory for course files")
 	hermesURL := flag.String("hermes-url", envOr("HERMES_URL", "http://hermes-lya.openclaw.svc.cluster.local:8642"), "Hermes API server URL")
-	hermesKey := flag.String("hermes-key", envOr("HERMES_API_KEY", ""), "Hermes API server key")
+	hermesKey := flag.String("hermes-key", strings.TrimSpace(envOr("HERMES_API_KEY", "")), "Hermes API server key")
 	flag.Parse()
 
 	// Ensure workspace exists
