@@ -1,0 +1,21 @@
+{
+  "name": "Assistant Pédagogique",
+  "short_name": "Cours IA",
+  "description": "Création de cours d'anglais assistée par IA",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4263eb",
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
