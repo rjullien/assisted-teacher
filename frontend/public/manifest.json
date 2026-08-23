@@ -1,6 +1,6 @@
 {
-  "name": "Assistant Pédagogique",
-  "short_name": "Cours IA",
+  "name": "Desk — Assistant Pédagogique",
+  "short_name": "Desk",
   "description": "Création de cours d'anglais assistée par IA",
   "start_url": "/",
   "display": "standalone",
