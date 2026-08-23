@@ -7,6 +7,7 @@ import { gfm } from '@milkdown/preset-gfm'
 import { history } from '@milkdown/plugin-history'
 import { listener, listenerCtx } from '@milkdown/plugin-listener'
 import { useAutoSave, type SaveStatus } from '../hooks/useAutoSave'
+import { useI18n } from '../i18n'
 
 interface EditorProps {
   content: string
@@ -18,21 +19,22 @@ interface EditorProps {
 }
 
 function SaveIndicator({ status }: { status: SaveStatus }) {
+  const { t } = useI18n()
   if (status === 'idle') return null
 
-  const config: Record<SaveStatus, { icon: string; text: string; className: string }> = {
-    idle: { icon: '', text: '', className: '' },
-    unsaved: { icon: '●', text: 'Non sauvegardé', className: 'save-indicator unsaved' },
-    saving: { icon: '⏳', text: 'Sauvegarde…', className: 'save-indicator saving' },
-    saved: { icon: '✓', text: 'Sauvegardé', className: 'save-indicator saved' },
-    error: { icon: '⚠️', text: 'Erreur de sauvegarde', className: 'save-indicator error' },
+  const config: Record<SaveStatus, { icon: string; textKey: string; className: string }> = {
+    idle: { icon: '', textKey: '', className: '' },
+    unsaved: { icon: '●', textKey: 'editor.unsaved', className: 'save-indicator unsaved' },
+    saving: { icon: '⏳', textKey: 'editor.saving', className: 'save-indicator saving' },
+    saved: { icon: '✓', textKey: 'editor.saved', className: 'save-indicator saved' },
+    error: { icon: '⚠️', textKey: 'editor.error', className: 'save-indicator error' },
   }
 
-  const { icon, text, className } = config[status]
+  const { icon, textKey, className } = config[status]
 
   return (
     <span className={className}>
-      {icon} {text}
+      {icon} {t(textKey)}
     </span>
   )
 }
@@ -62,6 +64,7 @@ function MilkdownEditorInner({ content, onChange }: { content: string; onChange:
 }
 
 export default function Editor({ content, lastSavedContent, onChange, onSave, onFlushRef, filePath }: EditorProps) {
+  const { t } = useI18n()
   const { status, flush } = useAutoSave(content, lastSavedContent, onSave)
 
   // Expose flush to parent for use before file switching
@@ -92,7 +95,7 @@ export default function Editor({ content, lastSavedContent, onChange, onSave, on
     return (
       <div className="editor-panel">
         <div className="editor-empty">
-          Sélectionnez un cours à gauche, ou créez-en un nouveau.
+          {t('editor.empty')}
         </div>
       </div>
     )

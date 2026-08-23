@@ -3,6 +3,7 @@ import FileTree from './FileTree'
 import Editor from './Editor'
 import Chat from './Chat'
 import ProgrammePanel from './ProgrammePanel'
+import { useI18n } from '../i18n'
 
 type Tab = 'files' | 'editor' | 'chat' | 'programme'
 
@@ -59,6 +60,7 @@ export default function MobileLayout({
   onFlushRef,
   onInsertFromChat,
 }: MobileLayoutProps) {
+  const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<Tab>('files')
 
   // Auto-switch to editor when a file is selected
@@ -109,14 +111,14 @@ export default function MobileLayout({
           onClick={() => setActiveTab('files')}
         >
           <span className="mobile-tab-icon">📁</span>
-          <span className="mobile-tab-label">Fichiers</span>
+          <span className="mobile-tab-label">{t('mobile.files')}</span>
         </button>
         <button
           className={`mobile-tab ${activeTab === 'editor' ? 'active' : ''}`}
           onClick={() => setActiveTab('editor')}
         >
           <span className="mobile-tab-icon">✏️</span>
-          <span className="mobile-tab-label">Éditeur</span>
+          <span className="mobile-tab-label">{t('mobile.editor')}</span>
           {currentFile && <span className="mobile-tab-dot" />}
         </button>
         <button
@@ -124,14 +126,14 @@ export default function MobileLayout({
           onClick={() => setActiveTab('chat')}
         >
           <span className="mobile-tab-icon">💬</span>
-          <span className="mobile-tab-label">IA</span>
+          <span className="mobile-tab-label">{t('mobile.ia')}</span>
         </button>
         <button
           className={`mobile-tab ${activeTab === 'programme' ? 'active' : ''}`}
           onClick={() => setActiveTab('programme')}
         >
           <span className="mobile-tab-icon">📋</span>
-          <span className="mobile-tab-label">Programme</span>
+          <span className="mobile-tab-label">{t('mobile.programme')}</span>
         </button>
       </nav>
     </div>

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import ProgrammePanel from './ProgrammePanel'
+import { useI18n } from '../i18n'
 
 interface ProgrammeData {
   niveau: string
@@ -34,6 +35,7 @@ interface ProgrammeDrawerProps {
 }
 
 export default function ProgrammeDrawer({ open, onClose, programme }: ProgrammeDrawerProps) {
+  const { t } = useI18n()
   const drawerRef = useRef<HTMLDivElement>(null)
 
   // Close on Escape key
@@ -67,15 +69,15 @@ export default function ProgrammeDrawer({ open, onClose, programme }: ProgrammeD
         className={`programme-drawer ${open ? 'open' : ''}`}
         role="dialog"
         aria-modal="true"
-        aria-label="Programme officiel"
+        aria-label={t('programme.title')}
         tabIndex={-1}
       >
         <div className="programme-drawer-header">
-          <h2>Programme officiel</h2>
+          <h2>{t('programme.title')}</h2>
           <button
             className="programme-drawer-close"
             onClick={onClose}
-            aria-label="Fermer"
+            aria-label="Close"
           >
             ✕
           </button>

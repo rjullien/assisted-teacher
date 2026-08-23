@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useI18n } from '../i18n'
 
 interface ProgrammeData {
   niveau: string
@@ -55,11 +56,13 @@ function Section({ title, icon, defaultOpen = false, children }: {
 }
 
 export default function ProgrammePanel({ programme }: ProgrammePanelProps) {
+  const { t } = useI18n()
+
   if (!programme) {
     return (
       <div className="programme-panel">
         <div className="programme-empty">
-          Chargement du programme…
+          {t('programme.loading')}
         </div>
       </div>
     )
@@ -71,7 +74,7 @@ export default function ProgrammePanel({ programme }: ProgrammePanelProps) {
     <div className="programme-panel">
       {/* Header */}
       <div className="programme-panel-header">
-        <h2>📋 Programme — {niveau}</h2>
+        <h2>{t('programme.header', { niveau })}</h2>
         <div className="programme-cecrl-badges">
           {Object.entries(cecrl).map(([key, val]) => (
             <span key={key} className="programme-badge">
@@ -82,7 +85,11 @@ export default function ProgrammePanel({ programme }: ProgrammePanelProps) {
       </div>
 
       {/* Axes culturels */}
-      <Section title={`Axes culturels (${contraintes.axes_a_traiter}/${contraintes.axes_total} à traiter)`} icon="🎯" defaultOpen>
+      <Section
+        title={t('programme.axes', { count: String(contraintes.axes_a_traiter), total: String(contraintes.axes_total) })}
+        icon="🎯"
+        defaultOpen
+      >
         <p className="programme-note">{contraintes.note}</p>
         <ul className="programme-axes-list">
           {axes_culturels.map((axe) => (
@@ -92,7 +99,7 @@ export default function ProgrammePanel({ programme }: ProgrammePanelProps) {
       </Section>
 
       {/* Compétences */}
-      <Section title="Compétences langagières" icon="📝" defaultOpen>
+      <Section title={t('programme.competences')} icon="📝" defaultOpen>
         <div className="programme-competences-grid">
           {Object.values(competences).map((comp) => (
             <div key={comp.code} className="programme-competence-card">
@@ -109,7 +116,7 @@ export default function ProgrammePanel({ programme }: ProgrammePanelProps) {
       </Section>
 
       {/* Grammaire */}
-      <Section title={`Grammaire (${grammaire.length} points)`} icon="📖">
+      <Section title={t('programme.grammaire', { count: String(grammaire.length) })} icon="📖">
         <ul className="programme-grammar-list">
           {grammaire.map((point, i) => (
             <li key={i}>{point}</li>
@@ -118,7 +125,7 @@ export default function ProgrammePanel({ programme }: ProgrammePanelProps) {
       </Section>
 
       {/* Vocabulaire */}
-      <Section title="Vocabulaire thématique" icon="🔤">
+      <Section title={t('programme.vocabulaire')} icon="🔤">
         <div className="programme-vocab-sections">
           {Object.entries(vocabulaire_thematique).map(([key, words]) => {
             const label = key
@@ -143,6 +150,7 @@ export default function ProgrammePanel({ programme }: ProgrammePanelProps) {
 }
 
 function AxeItem({ axe }: { axe: ProgrammeData['axes_culturels'][0] }) {
+  const { t } = useI18n()
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -150,7 +158,7 @@ function AxeItem({ axe }: { axe: ProgrammeData['axes_culturels'][0] }) {
       <button className="programme-axe-toggle" onClick={() => setExpanded(!expanded)}>
         <span className="programme-axe-numero">{axe.numero}.</span>
         <span className="programme-axe-titre">{axe.titre}</span>
-        {axe.obligatoire && <span className="programme-axe-badge">⭐ OBLIGATOIRE</span>}
+        {axe.obligatoire && <span className="programme-axe-badge">{t('programme.obligatoire')}</span>}
         <span className={`programme-axe-chevron ${expanded ? 'open' : ''}`}>▸</span>
       </button>
       {expanded && (

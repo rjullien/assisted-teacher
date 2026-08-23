@@ -1188,3 +1188,27 @@ body {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
+
+
+
+/* ============================================
+   LANGUAGE TOGGLE
+   ============================================ */
+
+.toolbar-lang-toggle {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.toolbar-lang-toggle:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+}
