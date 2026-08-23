@@ -1,0 +1,126 @@
+import { useState } from 'react'
+import FileTree from './FileTree'
+import Editor from './Editor'
+import Chat from './Chat'
+
+type Tab = 'files' | 'editor' | 'chat'
+
+interface ProgrammeData {
+  niveau: string
+  cecrl: Record<string, string>
+  axes_culturels: Array<{
+    numero: number
+    titre: string
+    description: string
+    exemples_objets_etude: string[]
+    obligatoire: boolean
+  }>
+  contraintes: {
+    axes_a_traiter: number
+    axes_total: number
+    axe_obligatoire: number
+    note: string
+  }
+  competences: Record<string, {
+    code: string
+    descripteur: string
+    niveau_attendu_LVA: string
+    niveau_attendu_LVB: string
+  }>
+  grammaire: string[]
+  vocabulaire_thematique: Record<string, string[]>
+}
+
+interface MobileLayoutProps {
+  currentFile: string | null
+  fileContent: string
+  lastSavedContent: string
+  refreshKey: number
+  programme: ProgrammeData | null
+  onFileSelect: (path: string) => void
+  onFileTreeRefresh: () => void
+  onFileContentChange: (content: string) => void
+  onSave: (content: string) => Promise<void>
+  onFlushRef: React.MutableRefObject<(() => Promise<void>) | null>
+  onInsertFromChat: (text: string) => void
+}
+
+export default function MobileLayout({
+  currentFile,
+  fileContent,
+  lastSavedContent,
+  refreshKey,
+  programme,
+  onFileSelect,
+  onFileTreeRefresh,
+  onFileContentChange,
+  onSave,
+  onFlushRef,
+  onInsertFromChat,
+}: MobileLayoutProps) {
+  const [activeTab, setActiveTab] = useState<Tab>('files')
+
+  // Auto-switch to editor when a file is selected
+  const handleFileSelect = (path: string) => {
+    onFileSelect(path)
+    setActiveTab('editor')
+  }
+
+  return (
+    <div className="mobile-layout">
+      <div className="mobile-content">
+        {activeTab === 'files' && (
+          <FileTree
+            onSelect={handleFileSelect}
+            onRefresh={onFileTreeRefresh}
+            refreshKey={refreshKey}
+          />
+        )}
+        {activeTab === 'editor' && (
+          <Editor
+            content={fileContent}
+            lastSavedContent={lastSavedContent}
+            onChange={onFileContentChange}
+            onSave={onSave}
+            onFlushRef={onFlushRef}
+            filePath={currentFile}
+          />
+        )}
+        {activeTab === 'chat' && (
+          <Chat
+            currentFile={currentFile}
+            onInsert={(text) => {
+              onInsertFromChat(text)
+              setActiveTab('editor')
+            }}
+            programme={programme}
+          />
+        )}
+      </div>
+      <nav className="mobile-tab-bar">
+        <button
+          className={`mobile-tab ${activeTab === 'files' ? 'active' : ''}`}
+          onClick={() => setActiveTab('files')}
+        >
+          <span className="mobile-tab-icon">📁</span>
+          <span className="mobile-tab-label">Fichiers</span>
+        </button>
+        <button
+          className={`mobile-tab ${activeTab === 'editor' ? 'active' : ''}`}
+          onClick={() => setActiveTab('editor')}
+        >
+          <span className="mobile-tab-icon">✏️</span>
+          <span className="mobile-tab-label">Éditeur</span>
+          {currentFile && <span className="mobile-tab-dot" />}
+        </button>
+        <button
+          className={`mobile-tab ${activeTab === 'chat' ? 'active' : ''}`}
+          onClick={() => setActiveTab('chat')}
+        >
+          <span className="mobile-tab-icon">💬</span>
+          <span className="mobile-tab-label">IA</span>
+        </button>
+      </nav>
+    </div>
+  )
+}

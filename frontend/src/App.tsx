@@ -4,7 +4,9 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import FileTree from './components/FileTree'
 import Editor from './components/Editor'
 import Chat from './components/Chat'
+import MobileLayout from './components/MobileLayout'
 import Toolbar, { type Niveau } from './components/Toolbar'
+import { useIsMobile } from './hooks/useIsMobile'
 import { getText, putText, postBlob, getJSON, handleAuthExpired } from './api'
 
 // --- Programme types ---
@@ -54,6 +56,7 @@ function saveNiveau(niveau: Niveau) {
 // --- App ---
 
 export default function App() {
+  const isMobile = useIsMobile()
   const [currentFile, setCurrentFile] = useState<string | null>(null)
   const [fileContent, setFileContent] = useState<string>('')
   const [lastSavedContent, setLastSavedContent] = useState<string>('')
@@ -139,6 +142,33 @@ export default function App() {
   }
 
   const handleFileTreeRefresh = () => setRefreshKey((k) => k + 1)
+
+  if (isMobile) {
+    return (
+      <div className="app app--mobile">
+        <Toolbar
+          currentFile={currentFile}
+          niveau={niveau}
+          onNiveauChange={handleNiveauChange}
+          onExportPDF={() => handleExport('pdf')}
+          onExportDOCX={() => handleExport('docx')}
+        />
+        <MobileLayout
+          currentFile={currentFile}
+          fileContent={fileContent}
+          lastSavedContent={lastSavedContent}
+          refreshKey={refreshKey}
+          programme={programme}
+          onFileSelect={handleFileSelect}
+          onFileTreeRefresh={handleFileTreeRefresh}
+          onFileContentChange={setFileContent}
+          onSave={handleSave}
+          onFlushRef={flushRef}
+          onInsertFromChat={handleInsertFromChat}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="app">
