@@ -15,6 +15,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +28,20 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+// keyFingerprint returns the first 8 hex chars of SHA-256(key).
+// Safe to log (non-reversible) and enough to prove whether two sides hold the
+// same secret. Compare with, on the cluster:
+//
+//	kubectl get secret hermes-lya-secret -n openclaw \
+//	  -o jsonpath='{.data.API_SERVER_KEY}' | base64 -d | tr -d '\n' | sha256sum
+func keyFingerprint(key string) string {
+	if key == "" {
+		return "empty"
+	}
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])[:8]
+}
 
 // --- Job infrastructure (same pattern as tripkit-backend/internal/leo/job.go) ---
 
@@ -161,7 +177,8 @@ func NewHermesBridge(hermesURL, apiKey string) *HermesBridge {
 	if key != apiKey {
 		log.Printf("hermes: API key had %d surrounding whitespace byte(s) — trimmed", len(apiKey)-len(key))
 	}
-	log.Printf("hermes: bridge configured (url=%s, keyLen=%d)", hermesURL, len(key))
+	log.Printf("hermes: bridge configured (url=%s, keyLen=%d, keyFp=%s)",
+		hermesURL, len(key), keyFingerprint(key))
 	return &HermesBridge{
 		hermesURL: strings.TrimRight(strings.TrimSpace(hermesURL), "/"),
 		apiKey:    key,
@@ -293,6 +310,12 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			// Surface the fingerprint so the sent key can be compared with the
+			// one hermes holds, without ever logging the secret itself.
+			log.Printf("hermes: auth rejected (HTTP %d) with keyLen=%d keyFp=%s url=%s",
+				resp.StatusCode, len(b.apiKey), keyFingerprint(b.apiKey), b.hermesURL)
+		}
 		return fmt.Errorf("hermes HTTP %d: %s", resp.StatusCode, truncateStr(string(raw), 200))
 	}
 
