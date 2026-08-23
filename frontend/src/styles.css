@@ -1554,3 +1554,20 @@ body {
   font-size: 14px;
   min-height: 36px;
 }
+
+
+
+/* Dashboard link (discreet) */
+.toolbar-dashboard-link {
+  font-size: 14px;
+  text-decoration: none;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+  padding: 4px;
+  border-radius: var(--radius);
+}
+
+.toolbar-dashboard-link:hover {
+  opacity: 1;
+  background: var(--bg-tertiary);
+}

@@ -88,7 +88,17 @@ export default function Toolbar({
         <span className="toolbar-lya-title">{t('lya.title')}</span>
       )}
 
-      {/* Always visible: language toggle */}
+      {/* Always visible: language toggle + dashboard link */}
+      <a
+        className="toolbar-dashboard-link"
+        href="https://oc-board.bapttf.com/"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Token dashboard"
+      >
+        📊
+      </a>
+
       <button
         className="toolbar-lang-toggle"
         onClick={() => setLocale(locale === 'fr' ? 'en' : 'fr')}
