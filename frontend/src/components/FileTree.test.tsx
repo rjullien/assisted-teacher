@@ -134,9 +134,27 @@ describe('FileTree', () => {
     })
   })
 
-  it('has a new file button', async () => {
+  it('has new file and new folder buttons in header', async () => {
     render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
-    expect(screen.getByText('+ Nouveau')).toBeInTheDocument()
+    // Header buttons for creating at root
+    const newFileButtons = screen.getAllByTitle('Nouveau cours')
+    expect(newFileButtons.length).toBeGreaterThanOrEqual(1)
+    const newFolderButtons = screen.getAllByTitle('Nouveau dossier')
+    expect(newFolderButtons.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('shows folder actions (new file, new folder, rename, delete) on directories', async () => {
+    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('B1')).toBeInTheDocument()
+    })
+
+    // Directories should have "Nouveau cours ici" button
+    const newFileHereButtons = screen.getAllByTitle('Nouveau cours ici')
+    expect(newFileHereButtons.length).toBeGreaterThanOrEqual(1)
+    const newSubfolderButtons = screen.getAllByTitle('Nouveau sous-dossier')
+    expect(newSubfolderButtons.length).toBeGreaterThanOrEqual(1)
   })
 
   it('refetches when refreshKey changes', async () => {
@@ -160,9 +178,31 @@ describe('FileTree', () => {
 
     render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
 
-    // Should not crash, show header at minimum
     await waitFor(() => {
       expect(screen.getByText('Mes cours')).toBeInTheDocument()
+    })
+  })
+
+  it('creates a new folder when clicking the folder button', async () => {
+    vi.spyOn(window, 'prompt').mockReturnValue('Grammaire')
+    ;(globalThis.fetch as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(mockJsonResponse(mockTree)) // initial loadTree
+      .mockResolvedValueOnce(mockJsonResponse({ status: 'ok' })) // POST mkdir
+      .mockResolvedValueOnce(mockJsonResponse(mockTree)) // reload after create
+
+    render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+
+    await waitFor(() => {
+      expect(screen.getAllByTitle('Nouveau dossier').length).toBeGreaterThanOrEqual(1)
+    })
+
+    fireEvent.click(screen.getAllByTitle('Nouveau dossier')[0])
+
+    await waitFor(() => {
+      const mkdirCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.find(
+        (call: unknown[]) => String(call[0]).includes('/api/files/mkdir')
+      )
+      expect(mkdirCall).toBeDefined()
     })
   })
 
@@ -176,21 +216,18 @@ describe('FileTree', () => {
     render(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
 
     await waitFor(() => {
-      expect(screen.getByText('+ Nouveau')).toBeInTheDocument()
+      expect(screen.getAllByTitle('Nouveau cours').length).toBeGreaterThanOrEqual(1)
     })
 
-    fireEvent.click(screen.getByText('+ Nouveau'))
+    fireEvent.click(screen.getAllByTitle('Nouveau cours')[0])
 
     await waitFor(() => {
-      // Should have called fetch with sanitized path
       const putCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.find(
         (call: unknown[]) => String(call[0]).includes('/api/file?path=')
       )
       expect(putCall).toBeDefined()
       const url = String(putCall![0])
-      // Extract the path param value (decoded)
       const pathParam = decodeURIComponent(url.split('path=')[1])
-      // Should be sanitized: no spaces, no ?, no !
       expect(pathParam).toBe('Mon_cours_super_et_génial.md')
     })
   })
