@@ -6,9 +6,10 @@ interface ToolbarProps {
   onNiveauChange: (niveau: Niveau) => void
   onExportPDF: () => void
   onExportDOCX: () => void
+  onToggleProgramme?: () => void
 }
 
-export default function Toolbar({ currentFile, niveau, onNiveauChange, onExportPDF, onExportDOCX }: ToolbarProps) {
+export default function Toolbar({ currentFile, niveau, onNiveauChange, onExportPDF, onExportDOCX, onToggleProgramme }: ToolbarProps) {
   return (
     <div className="toolbar">
       <h1>📚 Assistant Pédagogique</h1>
@@ -25,6 +26,12 @@ export default function Toolbar({ currentFile, niveau, onNiveauChange, onExportP
           <option value="terminale">Terminale</option>
         </select>
       </div>
+
+      {onToggleProgramme && (
+        <button onClick={onToggleProgramme} title="Voir le programme officiel">
+          📋 Programme
+        </button>
+      )}
 
       <span className="current-file">
         {currentFile || 'Aucun fichier sélectionné'}

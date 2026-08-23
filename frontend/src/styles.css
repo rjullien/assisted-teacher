@@ -812,3 +812,379 @@ body {
     display: none !important;
   }
 }
+
+
+
+/* ============================================
+   PROGRAMME DRAWER (desktop slide-over)
+   ============================================ */
+
+.programme-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 900;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+.programme-drawer-backdrop.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.programme-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 420px;
+  max-width: 90vw;
+  background: var(--bg-primary);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.12);
+  z-index: 950;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  outline: none;
+}
+
+.programme-drawer.open {
+  transform: translateX(0);
+}
+
+.programme-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.programme-drawer-header h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.programme-drawer-close {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  transition: background 0.15s, color 0.15s;
+}
+
+.programme-drawer-close:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.programme-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ============================================
+   PROGRAMME PANEL (shared between drawer & mobile)
+   ============================================ */
+
+.programme-panel {
+  padding: 16px;
+}
+
+.programme-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.programme-panel-header {
+  margin-bottom: 20px;
+}
+
+.programme-panel-header h2 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.programme-cecrl-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.programme-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--accent-light);
+  color: var(--accent);
+  border-radius: 12px;
+}
+
+/* ---- Collapsible sections ---- */
+
+.programme-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.programme-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.programme-section-header:hover {
+  background: var(--bg-tertiary);
+}
+
+.programme-section-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.programme-section-title {
+  flex: 1;
+}
+
+.programme-section-chevron {
+  font-size: 12px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.programme-section-chevron.open {
+  transform: rotate(90deg);
+}
+
+.programme-section-content {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.programme-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+/* ---- Axes list ---- */
+
+.programme-axes-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.programme-axe-item {
+  border-bottom: 1px solid var(--border);
+}
+
+.programme-axe-item:last-child {
+  border-bottom: none;
+}
+
+.programme-axe-item.obligatoire {
+  background: #fffbeb;
+}
+
+.programme-axe-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-primary);
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.programme-axe-toggle:hover {
+  background: var(--bg-tertiary);
+}
+
+.programme-axe-numero {
+  font-weight: 700;
+  color: var(--accent);
+  min-width: 20px;
+}
+
+.programme-axe-titre {
+  flex: 1;
+  font-weight: 500;
+}
+
+.programme-axe-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #d97706;
+  background: #fef3c7;
+  padding: 2px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.programme-axe-chevron {
+  font-size: 11px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.programme-axe-chevron.open {
+  transform: rotate(90deg);
+}
+
+.programme-axe-details {
+  padding: 8px 8px 8px 26px;
+}
+
+.programme-axe-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.programme-axe-exemples {
+  padding-left: 16px;
+  margin: 0;
+}
+
+.programme-axe-exemples li {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 3px;
+  line-height: 1.4;
+}
+
+/* ---- Compétences grid ---- */
+
+.programme-competences-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.programme-competence-card {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+}
+
+.programme-competence-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.programme-competence-code {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--accent);
+}
+
+.programme-competence-levels {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.programme-competence-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin: 0;
+}
+
+/* ---- Grammar list ---- */
+
+.programme-grammar-list {
+  padding-left: 18px;
+  margin: 0;
+}
+
+.programme-grammar-list li {
+  font-size: 12px;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  line-height: 1.5;
+}
+
+/* ---- Vocabulary ---- */
+
+.programme-vocab-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.programme-vocab-group h4 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  text-transform: capitalize;
+}
+
+.programme-vocab-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.programme-vocab-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: var(--bg-tertiary);
+  border-radius: 10px;
+  color: var(--text-primary);
+}
+
+/* ---- Mobile programme wrapper ---- */
+
+.mobile-programme-wrapper {
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}

@@ -2,8 +2,9 @@ import { useState } from 'react'
 import FileTree from './FileTree'
 import Editor from './Editor'
 import Chat from './Chat'
+import ProgrammePanel from './ProgrammePanel'
 
-type Tab = 'files' | 'editor' | 'chat'
+type Tab = 'files' | 'editor' | 'chat' | 'programme'
 
 interface ProgrammeData {
   niveau: string
@@ -96,6 +97,11 @@ export default function MobileLayout({
             programme={programme}
           />
         )}
+        {activeTab === 'programme' && (
+          <div className="mobile-programme-wrapper">
+            <ProgrammePanel programme={programme} />
+          </div>
+        )}
       </div>
       <nav className="mobile-tab-bar">
         <button
@@ -119,6 +125,13 @@ export default function MobileLayout({
         >
           <span className="mobile-tab-icon">💬</span>
           <span className="mobile-tab-label">IA</span>
+        </button>
+        <button
+          className={`mobile-tab ${activeTab === 'programme' ? 'active' : ''}`}
+          onClick={() => setActiveTab('programme')}
+        >
+          <span className="mobile-tab-icon">📋</span>
+          <span className="mobile-tab-label">Programme</span>
         </button>
       </nav>
     </div>

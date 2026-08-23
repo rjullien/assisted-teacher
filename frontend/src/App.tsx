@@ -5,6 +5,7 @@ import FileTree from './components/FileTree'
 import Editor from './components/Editor'
 import Chat from './components/Chat'
 import MobileLayout from './components/MobileLayout'
+import ProgrammeDrawer from './components/ProgrammeDrawer'
 import Toolbar, { type Niveau } from './components/Toolbar'
 import { useIsMobile } from './hooks/useIsMobile'
 import { getText, putText, postBlob, getJSON, handleAuthExpired } from './api'
@@ -63,6 +64,7 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [niveau, setNiveau] = useState<Niveau>(loadNiveau)
   const [programme, setProgramme] = useState<ProgrammeData | null>(null)
+  const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false)
   const flushRef = useRef<(() => Promise<void>) | null>(null)
 
   // Fetch programme data when niveau changes
@@ -178,6 +180,7 @@ export default function App() {
         onNiveauChange={handleNiveauChange}
         onExportPDF={() => handleExport('pdf')}
         onExportDOCX={() => handleExport('docx')}
+        onToggleProgramme={() => setProgrammeDrawerOpen((o) => !o)}
       />
       <div className="workspace">
         <Allotment>
@@ -207,6 +210,11 @@ export default function App() {
           </Allotment.Pane>
         </Allotment>
       </div>
+      <ProgrammeDrawer
+        open={programmeDrawerOpen}
+        onClose={() => setProgrammeDrawerOpen(false)}
+        programme={programme}
+      />
     </div>
   )
 }
