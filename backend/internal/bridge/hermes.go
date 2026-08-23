@@ -247,7 +247,11 @@ func (b *HermesBridge) startJob(content, systemPrompt string) *Job {
 		err := b.callHermesStream(ctx, job, content, systemPrompt)
 		if job.status == JobRunning {
 			if err != nil {
-				job.append(StreamEvent{Type: "error", Error: "Échec IA. Réessaie.", Detail: err.Error()})
+				userMsg := "Échec IA. Réessaie."
+				if strings.Contains(err.Error(), "hermes auth failed") {
+					userMsg = "Clé API Hermes invalide (HERMES_API_KEY ≠ API_SERVER_KEY de Lya)."
+				}
+				job.append(StreamEvent{Type: "error", Error: userMsg, Detail: err.Error()})
 			} else {
 				// Should not happen — done is emitted inside callHermesStream
 				job.append(StreamEvent{Type: "done"})
@@ -286,7 +290,14 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return fmt.Errorf("hermes HTTP %d: %s", resp.StatusCode, truncateStr(string(raw), 200))
+		bodySnippet := truncateStr(string(raw), 200)
+		if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			// Hermes API server rejected the Bearer key (not Authelia / user session).
+			// Typical body: "Invalid gateway API key" — usually means HERMES_API_KEY
+			// in Infisical doesn't match hermes-lya API_SERVER_KEY.
+			return fmt.Errorf("hermes auth failed (HTTP %d): %s — vérifie HERMES_API_KEY (= API_SERVER_KEY de Lya)", resp.StatusCode, bodySnippet)
+		}
+		return fmt.Errorf("hermes HTTP %d: %s", resp.StatusCode, bodySnippet)
 	}
 
 	// Consume SSE stream

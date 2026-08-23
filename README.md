@@ -88,10 +88,14 @@ Les fichiers Markdown sont la source de vérité. Les exports sont générés à
 |---|---|---|
 | `PORT` | `9847` | Port HTTP |
 | `WORKSPACE_DIR` | `./workspace` | Dossier des cours |
-| `ACP_AGENT_CMD` | — | Commande pour lancer l'agent ACP |
-| `ANTHROPIC_API_KEY` | — | Clé Anthropic (passée à l'agent) |
-| `OPENAI_API_KEY` | — | Clé OpenAI (passée à l'agent) |
-| `OPENCODE_BASE_URL` | — | URL Bifrost/OpenAI-compatible (passée à l'agent) |
+| `HERMES_URL` | `http://hermes-lya.openclaw.svc.cluster.local:8642` | URL API server Hermes (Lya) |
+| `HERMES_API_KEY` | — | Bearer key = `API_SERVER_KEY` de Lya (Infisical). Un mismatch → HTTP 401 `Invalid gateway API key` |
+
+### Auth vers Lya (Hermès)
+
+Le backend n'utilise plus de subprocess ACP : il appelle Lya en HTTP streaming (`POST /v1/chat/completions` + `Authorization: Bearer …`).
+
+Si le chat affiche `Échec IA` avec un détail `hermes auth failed (HTTP 401)` / `Invalid gateway API key`, ce n'est **pas** Authelia : c'est la clé gateway Hermes. Aligner `HERMES_API_KEY` (secret assisted-teacher) sur `API_SERVER_KEY` du pod `hermes-lya`.
 
 ## Roadmap
 

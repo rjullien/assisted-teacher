@@ -228,6 +228,12 @@ func TestHermesBridge_BadKey(t *testing.T) {
 	for _, ev := range events {
 		if ev.Type == "error" {
 			found = true
+			if !strings.Contains(ev.Detail, "hermes auth failed") && !strings.Contains(ev.Detail, "401") {
+				t.Errorf("expected auth failure detail, got %q", ev.Detail)
+			}
+			if !strings.Contains(ev.Error, "Clé API Hermes") {
+				t.Errorf("expected user-facing Hermes key error, got %q", ev.Error)
+			}
 			break
 		}
 	}
