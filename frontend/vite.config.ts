@@ -1,30 +1,30 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { execSync } from 'child_process'
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
 
 /**
  * Build version: prefer VITE_APP_VERSION (set by CI / Docker build arg),
- * fall back to git SHA for local dev, then to 'dev' when neither works
- * (e.g. inside a Docker build context without .git).
+ * fall back to version.json (semver source of truth), then to 'dev'.
  */
 function resolveVersion(): string {
   const fromEnv = process.env.VITE_APP_VERSION?.trim()
   if (fromEnv) return fromEnv
   try {
-    return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
-      .toString()
-      .trim()
+    const versionFile = resolve(__dirname, '..', 'version.json')
+    const { version } = JSON.parse(readFileSync(versionFile, 'utf-8'))
+    return version
   } catch {
     return 'dev'
   }
 }
 
-const gitSha = resolveVersion()
+const appVersion = resolveVersion()
 
 export default defineConfig({
   plugins: [react()],
   define: {
-    __APP_VERSION__: JSON.stringify(gitSha),
+    __APP_VERSION__: JSON.stringify(appVersion),
   },
   server: {
     proxy: {

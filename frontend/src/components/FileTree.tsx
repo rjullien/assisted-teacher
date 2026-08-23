@@ -225,8 +225,8 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
           📎 Voir les fichiers de Lya (hack temporaire)
         </a>
       </div>
-      <div className="file-tree-version" title={__APP_VERSION__}>
-        {__APP_VERSION__.slice(0, 7)}
+      <div className="file-tree-version" title={`Version ${__APP_VERSION__}`}>
+        v{__APP_VERSION__}
       </div>
     </div>
   )
