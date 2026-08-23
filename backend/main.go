@@ -53,6 +53,20 @@ func main() {
 	mux.HandleFunc("POST /api/export/pdf", exportHandler.ExportPDF)
 	mux.HandleFunc("POST /api/export/docx", exportHandler.ExportDOCX)
 
+	// User info (from Authelia forward-auth headers)
+	mux.HandleFunc("GET /api/me", func(w http.ResponseWriter, r *http.Request) {
+		name := r.Header.Get("Remote-Name")
+		user := r.Header.Get("Remote-User")
+		email := r.Header.Get("Remote-Email")
+		// Use display name if available, fallback to username
+		displayName := name
+		if displayName == "" {
+			displayName = user
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		fmt.Fprintf(w, `{"name":%q,"user":%q,"email":%q}`, displayName, user, email)
+	})
+
 	// Hermes bridge (connects to Lya via HTTP Runs API — reconnectable, no timeout issues)
 	if *hermesKey != "" {
 		hermesBridge := bridge.NewHermesBridge(*hermesURL, *hermesKey)

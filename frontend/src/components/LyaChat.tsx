@@ -23,8 +23,14 @@ interface StreamEvent {
 /**
  * LyaChat — Full-screen chat companion mode.
  * No system prompt, no file context. Pure conversation with Lya.
+ * Passes the user's name so Lya knows who she's talking to.
  */
-export default function LyaChat() {
+
+interface LyaChatProps {
+  userName?: string
+}
+
+export default function LyaChat({ userName }: LyaChatProps) {
   const { t } = useI18n()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -153,10 +159,16 @@ export default function LyaChat() {
     setMessages((prev) => [...prev, userMessage])
     setIsLoading(true)
 
+    // On the first message, include the user's name so Lya knows who she's talking to
+    let content = input.trim()
+    if (messages.length === 0 && userName) {
+      content = `[Je suis ${userName}]\n\n${content}`
+    }
+
     // No system prompt — pure conversation
     wsRef.current.send({
       type: 'prompt',
-      content: input.trim(),
+      content,
     })
     setInput('')
   }

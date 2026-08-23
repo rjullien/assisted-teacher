@@ -84,6 +84,7 @@ export default function App() {
   const [programme, setProgramme] = useState<ProgrammeData | null>(null)
   const [programmeError, setProgrammeError] = useState(false)
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false)
+  const [userName, setUserName] = useState<string>('')
   const flushRef = useRef<(() => Promise<void>) | null>(null)
 
   // i18n context value
@@ -102,6 +103,19 @@ export default function App() {
     setLocale: handleSetLocale,
     t: (key: string, params?: Record<string, string | number>) => tFn(locale, key, params),
   }), [locale, handleSetLocale])
+
+  // Fetch current user name (from Authelia headers)
+  useEffect(() => {
+    async function fetchUser() {
+      try {
+        const res = await getJSON<{ name: string; user: string; email: string }>('/api/me')
+        if (res.ok && res.data && res.data.name) {
+          setUserName(res.data.name)
+        }
+      } catch { /* ignore */ }
+    }
+    fetchUser()
+  }, [])
 
   // Fetch programme data when niveau or locale changes
   const fetchProgramme = useCallback(async (niv: string, lang: string) => {
@@ -215,7 +229,7 @@ export default function App() {
               onInsertFromChat={handleInsertFromChat}
             />
           ) : (
-            <LyaChat />
+            <LyaChat userName={userName} />
           )}
         </div>
       </I18nContext.Provider>
