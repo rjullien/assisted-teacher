@@ -3,7 +3,7 @@ import 'allotment/dist/style.css'
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import FileTree from './components/FileTree'
 import Editor from './components/Editor'
-import Chat from './components/Chat'
+import Chat, { emptyChatSession, type ChatSession } from './components/Chat'
 import LyaChat, { type LyaChatMessage } from './components/LyaChat'
 import MobileLayout from './components/MobileLayout'
 import ProgrammeDrawer from './components/ProgrammeDrawer'
@@ -87,12 +87,20 @@ export default function App() {
   const [userName, setUserName] = useState<string>('')
   const [piAvailable, setPiAvailable] = useState(false)
   const [lyaMessages, setLyaMessages] = useState<LyaChatMessage[]>([])
+  // Chat state lives here, not in Chat, because Chat is unmounted whenever the
+  // mobile tab or the app mode changes. One session per agent: per design
+  // decision D11 the two histories stay separate and are never replayed to the
+  // other agent.
+  const [deskSession, setDeskSession] = useState<ChatSession>(emptyChatSession)
+  const [piSession, setPiSession] = useState<ChatSession>(emptyChatSession)
   const flushRef = useRef<(() => Promise<void>) | null>(null)
 
   // Derived: is the workspace layout visible?
   const isWorkspace = mode === 'desk' || mode === 'pi'
   // Derived: which agent backend does the chat panel connect to?
   const chatAgent: 'lya' | 'pi' = mode === 'pi' ? 'pi' : 'lya'
+  const chatSession = chatAgent === 'pi' ? piSession : deskSession
+  const setChatSession = chatAgent === 'pi' ? setPiSession : setDeskSession
 
   // i18n context value
   const handleSetLocale = useCallback((l: Locale) => {
@@ -269,6 +277,8 @@ export default function App() {
               onInsertFromChat={handleInsertFromChat}
               agent={chatAgent}
               onFileChanged={handleFileChanged}
+              chatSession={chatSession}
+              onChatSessionChange={setChatSession}
             />
           ) : (
             <LyaChat userName={userName} messages={lyaMessages} onMessagesChange={setLyaMessages} />
@@ -319,6 +329,8 @@ export default function App() {
                   programme={programme}
                   agent={chatAgent}
                   onFileChanged={handleFileChanged}
+                  session={chatSession}
+                  onSessionChange={setChatSession}
                 />
               </Allotment.Pane>
             </Allotment>

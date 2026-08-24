@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import FileTree from './FileTree'
 import Editor from './Editor'
-import Chat from './Chat'
+import Chat, { type ChatSession } from './Chat'
 import ProgrammePanel from './ProgrammePanel'
 import { useI18n } from '../i18n'
 
@@ -49,6 +49,9 @@ interface MobileLayoutProps {
   onInsertFromChat: (text: string) => void
   agent?: 'lya' | 'pi'
   onFileChanged?: (path: string) => void
+  /** Held by App: the chat tab is unmounted every time another tab is shown. */
+  chatSession?: ChatSession
+  onChatSessionChange?: (session: ChatSession) => void
 }
 
 export default function MobileLayout({
@@ -67,6 +70,8 @@ export default function MobileLayout({
   onInsertFromChat,
   agent,
   onFileChanged,
+  chatSession,
+  onChatSessionChange,
 }: MobileLayoutProps) {
   const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<Tab>('files')
@@ -107,6 +112,8 @@ export default function MobileLayout({
             programme={programme}
             agent={agent}
             onFileChanged={onFileChanged}
+            session={chatSession}
+            onSessionChange={onChatSessionChange}
           />
         )}
         {activeTab === 'programme' && (
