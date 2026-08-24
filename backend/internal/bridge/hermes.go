@@ -169,8 +169,12 @@ type HermesBridge struct {
 	hermesURL string
 	apiKey    string
 	workDir   string
-	hub       *Hub
-	upgrader  websocket.Upgrader
+	// fsPrefixes are the mount points of Lya's OWN filesystem, stripped from the
+	// paths her tool-progress frames report before those paths are jailed into
+	// workDir. See stripHermesFSPrefix.
+	fsPrefixes []string
+	hub        *Hub
+	upgrader   websocket.Upgrader
 }
 
 func NewHermesBridge(hermesURL, apiKey, workDir string) *HermesBridge {
@@ -180,17 +184,93 @@ func NewHermesBridge(hermesURL, apiKey, workDir string) *HermesBridge {
 	if key != apiKey {
 		log.Printf("hermes: API key had %d surrounding whitespace byte(s) — trimmed", len(apiKey)-len(key))
 	}
-	log.Printf("hermes: bridge configured (url=%s, keyLen=%d, keyFp=%s, workDir=%s)",
-		hermesURL, len(key), keyFingerprint(key), workDir)
+	prefixes := parseHermesFSPrefixes(os.Getenv(hermesFSPrefixesEnv))
+	log.Printf("hermes: bridge configured (url=%s, keyLen=%d, keyFp=%s, workDir=%s, fsPrefixes=%s)",
+		hermesURL, len(key), keyFingerprint(key), workDir, strings.Join(prefixes, ","))
 	return &HermesBridge{
-		hermesURL: strings.TrimRight(strings.TrimSpace(hermesURL), "/"),
-		apiKey:    key,
-		workDir:   workDir,
-		hub:       NewHub(),
+		hermesURL:  strings.TrimRight(strings.TrimSpace(hermesURL), "/"),
+		apiKey:     key,
+		workDir:    workDir,
+		fsPrefixes: prefixes,
+		hub:        NewHub(),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 	}
+}
+
+// hermesFSPrefixesEnv overrides the Hermes-side mount points at deployment time.
+// Comma-separated, absolute, longest first. Where Lya's PVC is mounted inside
+// HER pod is deployment knowledge, not a constant of this program: a chart that
+// moves it must not require a code change here.
+const hermesFSPrefixesEnv = "HERMES_FS_PREFIXES"
+
+// defaultHermesFSPrefixes is what the hermes-lya deployment mounts today. Taken
+// from a production trace: asked to update "Test_folders/test_nvx_cours.md",
+// Lya searched /opt/data and /opt/data/home and finally created
+// /opt/data/Test_folders/test_nvx_cours.md — on her own disk.
+//
+// Longest first, because the list is scanned in order: with "/opt/data/" first,
+// "/opt/data/home/x.md" would mirror to "home/x.md" instead of "x.md".
+var defaultHermesFSPrefixes = []string{"/opt/data/home/", "/opt/data/"}
+
+// parseHermesFSPrefixes reads the comma-separated prefix list, falling back to
+// defaultHermesFSPrefixes when it is unset or contains nothing usable.
+//
+// Entries are kept in the order given (see defaultHermesFSPrefixes) and get a
+// trailing slash if they lack one: without it, stripping "/opt/data" from
+// "/opt/data/x.md" leaves "/x.md", still absolute, and safePath refuses it — an
+// operator footgun with a silent failure at the other end. A non-absolute entry
+// is dropped: it could only ever match by mangling a relative path.
+func parseHermesFSPrefixes(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		p := strings.TrimSpace(part)
+		if p == "" {
+			continue
+		}
+		if !strings.HasPrefix(p, "/") {
+			log.Printf("hermes: ignoring %s entry %q — a Hermes-side prefix must be absolute", hermesFSPrefixesEnv, p)
+			continue
+		}
+		if !strings.HasSuffix(p, "/") {
+			p += "/"
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return defaultHermesFSPrefixes
+	}
+	return out
+}
+
+// stripHermesFSPrefix maps a path as Hermes reports it onto a path relative to
+// the app's workspace.
+//
+// Hermes runs in another pod and her file tools work on HER filesystem, so her
+// tool-progress frames carry absolute paths like
+// "/opt/data/Test_folders/test_nvx_cours.md". safePath refuses absolute paths,
+// so every such frame used to be skipped and the teacher saw nothing change in
+// the editor while Lya reported success.
+//
+// ok is false when the path is absolute and matches none of the known prefixes:
+// that path is somewhere we know nothing about and stays refused, exactly as
+// before. A relative path is returned untouched — it is already what safePath
+// expects.
+//
+// This is NOT a path validator: the remainder still goes through safePath, which
+// is what keeps "/opt/data/../../etc/passwd" out (it strips to
+// "../../etc/passwd" and is refused there).
+func (b *HermesBridge) stripHermesFSPrefix(path string) (string, bool) {
+	if !filepath.IsAbs(path) {
+		return path, true
+	}
+	for _, prefix := range b.fsPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return strings.TrimPrefix(path, prefix), true
+		}
+	}
+	return "", false
 }
 
 // safePath validates and resolves a relative path within the workspace.
@@ -552,12 +632,29 @@ var writeToolNames = map[string]bool{
 	"edit_file":   true,
 }
 
+// writeMirrorResult is what a tool-progress frame did to the workspace.
+//
+// The two zero-value cases must not be confused in the per-job diagnostic:
+// "this frame was not a completed file write" (nothing to mirror) and "it was,
+// and we refused it" (something the teacher expected to land did not).
+type writeMirrorResult struct {
+	// path is the WORKSPACE-RELATIVE path written, "" if nothing was written.
+	// Relative because the frontend reloads the editor by relative path.
+	path string
+	// skipped marks a completed file write that was refused (unknown Hermes-side
+	// prefix, path escaping the workspace, extension not allowed).
+	skipped bool
+}
+
 // handleToolFileWrite inspects a tool-progress payload and, if it represents a
-// completed file-write operation, writes the file to disk and returns the
-// relative path. Returns "" if the event should not trigger a file write.
-func (b *HermesBridge) handleToolFileWrite(payload map[string]interface{}) string {
+// completed file-write operation, mirrors the file into the workspace and
+// returns its relative path.
+//
+// Lya's own tools write to HER filesystem (see stripHermesFSPrefix), so this is
+// the only path by which such a write reaches the teacher's workspace.
+func (b *HermesBridge) handleToolFileWrite(payload map[string]interface{}) writeMirrorResult {
 	if b.workDir == "" {
-		return ""
+		return writeMirrorResult{}
 	}
 
 	// Normalize tool name (same keys as frontend/src/tools.ts)
@@ -573,7 +670,7 @@ func (b *HermesBridge) handleToolFileWrite(payload map[string]interface{}) strin
 	}
 
 	if !writeToolNames[name] {
-		return ""
+		return writeMirrorResult{}
 	}
 
 	// Check status is "done"
@@ -582,7 +679,7 @@ func (b *HermesBridge) handleToolFileWrite(payload map[string]interface{}) strin
 		status = strFromMap(payload, "state")
 	}
 	if status != "done" {
-		return ""
+		return writeMirrorResult{}
 	}
 
 	// Normalize path
@@ -597,7 +694,7 @@ func (b *HermesBridge) handleToolFileWrite(payload map[string]interface{}) strin
 		path = strFromArgs(payload, "file")
 	}
 	if path == "" {
-		return ""
+		return writeMirrorResult{}
 	}
 
 	// Normalize content
@@ -612,28 +709,53 @@ func (b *HermesBridge) handleToolFileWrite(payload map[string]interface{}) strin
 		content = strFromArgs(payload, "content")
 	}
 	if content == "" {
-		return ""
+		return writeMirrorResult{}
 	}
 
-	// Validate path
-	absPath, err := b.safePath(path)
+	// Map Lya's filesystem onto the workspace before jailing: she reports absolute
+	// paths on her own PVC and safePath only accepts relative ones.
+	relPath, known := b.stripHermesFSPrefix(path)
+	if !known {
+		// Distinct from the escape message below on purpose: this one is an
+		// operator problem (Lya's storage moved, set HERMES_FS_PREFIXES), the other
+		// one is a path trying to leave the workspace. One shared "unsafe path"
+		// line made the two indistinguishable in `kubectl logs`.
+		log.Printf("hermes: file write skipped (unknown Hermes-side prefix, not under %s): %q",
+			strings.Join(b.fsPrefixes, " or "), path)
+		return writeMirrorResult{skipped: true}
+	}
+	if strings.TrimSpace(relPath) == "" {
+		log.Printf("hermes: file write skipped (path names a Hermes mount root, not a file): %q", path)
+		return writeMirrorResult{skipped: true}
+	}
+
+	// Validate path — safePath stays the ONLY path validator, applied to what is
+	// left after stripping, so "/opt/data/../../etc/passwd" is refused here.
+	absPath, err := b.safePath(relPath)
 	if err != nil {
-		log.Printf("hermes: file write skipped (unsafe path %q): %v", path, err)
-		return ""
+		log.Printf("hermes: file write skipped (path escapes the workspace): reported=%q relative=%q: %v", path, relPath, err)
+		return writeMirrorResult{skipped: true}
+	}
+	// Same allowlist as the file tools: staying inside the workspace is not
+	// enough, since everything written here is served back to the browser and
+	// opened in the Markdown editor.
+	if err := checkFileExt(relPath); err != nil {
+		log.Printf("hermes: file write skipped (extension not allowed): reported=%q: %v", path, err)
+		return writeMirrorResult{skipped: true}
 	}
 
 	// Create parent directories and write file
 	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
-		log.Printf("hermes: cannot create parent dir for %q: %v", path, err)
-		return ""
+		log.Printf("hermes: cannot create parent dir for %q: %v", relPath, err)
+		return writeMirrorResult{skipped: true}
 	}
 	if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
-		log.Printf("hermes: cannot write file %q: %v", path, err)
-		return ""
+		log.Printf("hermes: cannot write file %q: %v", relPath, err)
+		return writeMirrorResult{skipped: true}
 	}
 
-	log.Printf("hermes: wrote file %s (%d bytes)", path, len(content))
-	return path
+	log.Printf("hermes: mirrored file write reported=%q into %s (%d bytes)", path, relPath, len(content))
+	return writeMirrorResult{path: relPath}
 }
 
 // strFromMap extracts a string value from a map by key.
@@ -825,13 +947,23 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 		// At least one tool actually modified a file, so an interrupted loop must
 		// tell the teacher the workspace is already in an intermediate state.
 		wroteFiles bool
+		// Writes Lya performed with her OWN tools and that we mirrored into the
+		// workspace, and those we refused. See writeMirrorResult.
+		mirroredWrites int
+		skippedWrites  int
 	)
 	// deskMode is part of the line so 'no tool calls because Hermes ignores the
 	// tools parameter' cannot be confused with 'no tool calls because the teacher
 	// was in the copie/insertion sub-mode, where nothing is declared'.
+	//
+	// mirroredWrites/skippedWrites answer the question this feature failed on in
+	// production: Lya reported writing the file, the teacher saw nothing change,
+	// and the logs could not say whether anything reached the workspace.
+	// supported=false with mirroredWrites>0 is the normal shape today: she ignores
+	// the declared tools and uses her own.
 	defer func() {
-		log.Printf("hermes: tool_calls supported=%t (mode=%s deskMode=%s loops=%d toolCalls=%d)",
-			sawToolCalls, mode, deskMode, loops, toolCallCount)
+		log.Printf("hermes: tool_calls supported=%t (mode=%s deskMode=%s loops=%d toolCalls=%d mirroredWrites=%d skippedWrites=%d)",
+			sawToolCalls, mode, deskMode, loops, toolCallCount, mirroredWrites, skippedWrites)
 	}()
 
 	for loops = 1; loops <= maxToolLoops; loops++ {
@@ -852,6 +984,13 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 		}
 		turn, err := b.streamTurn(job, resp.Body, mode, deskMode, &full)
 		resp.Body.Close()
+		// Counted before any early return: a turn that mirrored a write and then
+		// failed still changed the teacher's workspace.
+		mirroredWrites += turn.mirroredWrites
+		skippedWrites += turn.skippedWrites
+		if turn.mirroredWrites > 0 {
+			wroteFiles = true
+		}
 		if err != nil {
 			return err
 		}
@@ -1176,6 +1315,12 @@ type turnResult struct {
 	// The caller needs it for the per-job diagnostic: a dropped call still means
 	// the gateway forwarded `tools` and the model answered with one.
 	droppedCalls int
+	// mirroredWrites and skippedWrites count the hermes.tool.progress file writes
+	// that landed in the workspace and those that were refused. Production showed
+	// Lya writing on her own filesystem with the app's workspace left untouched:
+	// these two counters are what makes "did anything land" greppable.
+	mirroredWrites int
+	skippedWrites  int
 }
 
 // streamTurn consumes one SSE stream. It forwards deltas and hermes.tool.progress
@@ -1233,14 +1378,21 @@ func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode, deskMode strin
 			// deskMode at all keeps this v1.9.x path: see legacyWritesEnabled.
 			if b.legacyWritesEnabled(mode, deskMode) {
 				if toolMap, ok := tool.(map[string]interface{}); ok {
-					if relPath := b.handleToolFileWrite(toolMap); relPath != "" {
+					mirror := b.handleToolFileWrite(toolMap)
+					switch {
+					case mirror.path != "":
+						res.mirroredWrites++
 						job.append(StreamEvent{
 							Type: "tool",
 							Tool: map[string]interface{}{
 								"name": "file_changed",
-								"path": relPath,
+								// Relative: Chat.tsx reloads the editor by
+								// workspace-relative path.
+								"path": mirror.path,
 							},
 						})
+					case mirror.skipped:
+						res.skippedWrites++
 					}
 				}
 			}

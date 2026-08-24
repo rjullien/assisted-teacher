@@ -3,6 +3,7 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -2123,5 +2124,278 @@ func TestHermesBridge_ToolLoop_LoopCapMentionsWrites(t *testing.T) {
 	done := doneEvent(t, events)
 	if !strings.Contains(done.Reply, "conservées") {
 		t.Errorf("expected the cut message to say the writes already applied are kept, got %q", done.Reply)
+	}
+}
+
+// --- Mirroring the writes Lya makes with her OWN tools ---
+//
+// Production trace (v1.10.0, mode Desk, sub-mode « Mise à jour directe »,
+// working file Test_folders/test_nvx_cours.md): Lya never called the declared
+// read_file / write_file / patch_file. She used her own file tools, which write
+// to HER filesystem, and her hermes.tool.progress frame therefore reported the
+// ABSOLUTE path /opt/data/Test_folders/test_nvx_cours.md. safePath refuses
+// absolute paths, so the write was only logged: the teacher was told the file had
+// been updated while the editor and the file tree never changed.
+
+// runMirrorWrite streams one hermes.tool.progress write frame reporting
+// reportedPath and returns the events plus the captured log of the job.
+func runMirrorWrite(t *testing.T, tmpDir, reportedPath, content, mode string) ([]StreamEvent, string) {
+	t.Helper()
+	hermes := mockHermesFileWriteServer("write_file", reportedPath, content, "done")
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	var events []StreamEvent
+	logged := captureLog(t, func() {
+		events = runHermesJob(t, b, "Ajoute une analyse de la politique us", mode)
+	})
+	return events, logged
+}
+
+// assertWorkspaceEmpty fails if anything at all was created under root.
+func assertWorkspaceEmpty(t *testing.T, root string) {
+	t.Helper()
+	var found []string
+	if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			found = append(found, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("cannot walk the workspace: %v", err)
+	}
+	if len(found) > 0 {
+		t.Errorf("expected an untouched workspace, found %v", found)
+	}
+}
+
+func TestHermesBridge_MirrorWrite_AbsoluteHermesPath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// The exact path of the incident, so the regression stays traceable to it.
+	events, logged := runMirrorWrite(t, tmpDir,
+		"/opt/data/Test_folders/test_nvx_cours.md", "# Test\n\n## US Politics", "desk")
+
+	assertNoErrorEvent(t, events)
+	// The frontend reloads the editor by workspace-relative path: with the
+	// Hermes-side path it would not match the open file and nothing would refresh.
+	if !hasFileChanged(events, "Test_folders/test_nvx_cours.md") {
+		t.Errorf("expected file_changed with the relative path, got %v", toolEventNames(events))
+	}
+	if hasFileChanged(events, "/opt/data/Test_folders/test_nvx_cours.md") {
+		t.Error("file_changed must not carry the Hermes-side absolute path")
+	}
+	data, err := os.ReadFile(filepath.Join(tmpDir, "Test_folders", "test_nvx_cours.md"))
+	if err != nil {
+		t.Fatalf("expected the write to be mirrored into the workspace: %v", err)
+	}
+	if string(data) != "# Test\n\n## US Politics" {
+		t.Errorf("mirrored content differs, got %q", string(data))
+	}
+	if !strings.Contains(logged, "mirroredWrites=1 skippedWrites=0") {
+		t.Errorf("expected the per-job diagnostic to count the mirrored write, got:\n%s", logged)
+	}
+}
+
+func TestHermesBridge_MirrorWrite_AbsoluteHomePath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// /opt/data/home/ must be stripped whole: with /opt/data/ tried first this
+	// would land in a spurious "home/" folder of the teacher's workspace.
+	events, _ := runMirrorWrite(t, tmpDir, "/opt/data/home/x.md", "# X", "desk")
+
+	assertNoErrorEvent(t, events)
+	if !hasFileChanged(events, "x.md") {
+		t.Errorf("expected file_changed with path x.md, got %v", toolEventNames(events))
+	}
+	if data, err := os.ReadFile(filepath.Join(tmpDir, "x.md")); err != nil || string(data) != "# X" {
+		t.Errorf("expected x.md mirrored at the workspace root, got %q / %v", string(data), err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "home", "x.md")); err == nil {
+		t.Error("the /opt/data/home/ prefix must be stripped whole, not down to home/x.md")
+	}
+}
+
+func TestHermesBridge_MirrorWrite_RelativePathUnchanged(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// A relative path is what safePath already accepted: the prefix stripping must
+	// not change anything for it.
+	events, logged := runMirrorWrite(t, tmpDir, "B1/unit5.md", "# Unit 5", "desk")
+
+	assertNoErrorEvent(t, events)
+	if !hasFileChanged(events, "B1/unit5.md") {
+		t.Errorf("expected file_changed with path B1/unit5.md, got %v", toolEventNames(events))
+	}
+	if data, err := os.ReadFile(filepath.Join(tmpDir, "B1", "unit5.md")); err != nil || string(data) != "# Unit 5" {
+		t.Errorf("expected B1/unit5.md mirrored unchanged, got %q / %v", string(data), err)
+	}
+	if !strings.Contains(logged, "mirroredWrites=1 skippedWrites=0") {
+		t.Errorf("expected the mirrored write to be counted, got:\n%s", logged)
+	}
+}
+
+func TestHermesBridge_MirrorWrite_TraversalUnderKnownPrefix(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Stripping must never become a way out of the workspace: what is left after
+	// /opt/data/ is ../../etc/passwd, and safePath is what refuses it.
+	events, logged := runMirrorWrite(t, tmpDir, "/opt/data/../../etc/passwd", "malicious", "desk")
+
+	assertNoErrorEvent(t, events)
+	for _, ev := range events {
+		if m, ok := ev.Tool.(map[string]interface{}); ok && m["name"] == "file_changed" {
+			t.Errorf("no file_changed must be emitted for a path escaping the workspace, got %v", m)
+		}
+	}
+	assertWorkspaceEmpty(t, tmpDir)
+	if _, err := os.Stat(filepath.Join(tmpDir, "..", "..", "etc", "passwd")); err == nil {
+		t.Error("the file must not be written outside the workspace")
+	}
+	if !strings.Contains(logged, "path escapes the workspace") {
+		t.Errorf("expected the escape-specific skip reason, got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "mirroredWrites=0 skippedWrites=1") {
+		t.Errorf("expected the refused write to be counted as skipped, got:\n%s", logged)
+	}
+}
+
+func TestHermesBridge_MirrorWrite_UnknownPrefixRefused(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// An absolute path we know nothing about stays refused: mapping it onto the
+	// workspace would be a guess about someone else's filesystem.
+	events, logged := runMirrorWrite(t, tmpDir, "/srv/other/x.md", "# X", "desk")
+
+	assertNoErrorEvent(t, events)
+	for _, ev := range events {
+		if m, ok := ev.Tool.(map[string]interface{}); ok && m["name"] == "file_changed" {
+			t.Errorf("no file_changed must be emitted for an unknown prefix, got %v", m)
+		}
+	}
+	assertWorkspaceEmpty(t, tmpDir)
+	if !strings.Contains(logged, "unknown Hermes-side prefix") {
+		t.Errorf("expected the unknown-prefix skip reason, got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "mirroredWrites=0 skippedWrites=1") {
+		t.Errorf("expected the refused write to be counted as skipped, got:\n%s", logged)
+	}
+}
+
+func TestHermesBridge_MirrorWrite_DisallowedExtension(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Inside the workspace is not enough: everything written here is served back
+	// to the browser and opened in the Markdown editor.
+	events, logged := runMirrorWrite(t, tmpDir, "/opt/data/install.sh", "rm -rf /", "desk")
+
+	assertNoErrorEvent(t, events)
+	for _, ev := range events {
+		if m, ok := ev.Tool.(map[string]interface{}); ok && m["name"] == "file_changed" {
+			t.Errorf("no file_changed must be emitted for a refused extension, got %v", m)
+		}
+	}
+	assertWorkspaceEmpty(t, tmpDir)
+	if !strings.Contains(logged, "extension not allowed") {
+		t.Errorf("expected the extension skip reason, got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "mirroredWrites=0 skippedWrites=1") {
+		t.Errorf("expected the refused write to be counted as skipped, got:\n%s", logged)
+	}
+}
+
+func TestHermesBridge_MirrorWrite_LyaModeAbsolutePath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Mode Lya has no file access by design, and the new prefix stripping must not
+	// have opened one through the absolute paths she reports.
+	events, logged := runMirrorWrite(t, tmpDir,
+		"/opt/data/Test_folders/test_nvx_cours.md", "# Test", "lya")
+
+	assertNoErrorEvent(t, events)
+	for _, ev := range events {
+		if m, ok := ev.Tool.(map[string]interface{}); ok && m["name"] == "file_changed" {
+			t.Errorf("no file_changed must be emitted in mode lya, got %v", m)
+		}
+	}
+	assertWorkspaceEmpty(t, tmpDir)
+	if !strings.Contains(logged, "mirroredWrites=0 skippedWrites=0") {
+		t.Errorf("mode lya must not even reach the mirroring code, got:\n%s", logged)
+	}
+}
+
+// TestHermesBridge_MirrorWrite_SkipReasonsAreDistinguishable: both refusals used
+// to log the same "file write skipped (unsafe path …)" line, so production logs
+// could not tell "Lya's storage moved, add the prefix" from "something tried to
+// leave the workspace".
+func TestHermesBridge_MirrorWrite_SkipReasonsAreDistinguishable(t *testing.T) {
+	_, unknownLog := runMirrorWrite(t, t.TempDir(), "/srv/other/x.md", "# X", "desk")
+	_, escapeLog := runMirrorWrite(t, t.TempDir(), "/opt/data/../../etc/passwd", "malicious", "desk")
+
+	if strings.Contains(unknownLog, "path escapes the workspace") {
+		t.Errorf("an unknown prefix must not be reported as an escape attempt, got:\n%s", unknownLog)
+	}
+	if strings.Contains(escapeLog, "unknown Hermes-side prefix") {
+		t.Errorf("an escape attempt must not be reported as an unknown prefix, got:\n%s", escapeLog)
+	}
+	if !strings.Contains(unknownLog, "unknown Hermes-side prefix") {
+		t.Errorf("expected the unknown-prefix reason, got:\n%s", unknownLog)
+	}
+	if !strings.Contains(escapeLog, "path escapes the workspace") {
+		t.Errorf("expected the escape reason, got:\n%s", escapeLog)
+	}
+}
+
+// TestHermesBridge_MirrorWrite_PrefixesFromEnv: where Lya's PVC is mounted is
+// deployment knowledge, so a chart that moves it must not need a code change.
+func TestHermesBridge_MirrorWrite_PrefixesFromEnv(t *testing.T) {
+	t.Setenv(hermesFSPrefixesEnv, "/srv/lya/data/")
+
+	tmpDir := t.TempDir()
+	events, _ := runMirrorWrite(t, tmpDir, "/srv/lya/data/B1/unit5.md", "# Unit 5", "desk")
+	if !hasFileChanged(events, "B1/unit5.md") {
+		t.Errorf("expected the configured prefix to be stripped, got %v", toolEventNames(events))
+	}
+	if data, err := os.ReadFile(filepath.Join(tmpDir, "B1", "unit5.md")); err != nil || string(data) != "# Unit 5" {
+		t.Errorf("expected B1/unit5.md mirrored, got %q / %v", string(data), err)
+	}
+
+	// The env value REPLACES the defaults: an operator who moved the mount and
+	// forgot a path must see it refused, not silently written somewhere else.
+	otherDir := t.TempDir()
+	events, logged := runMirrorWrite(t, otherDir, "/opt/data/B1/unit5.md", "# Unit 5", "desk")
+	for _, ev := range events {
+		if m, ok := ev.Tool.(map[string]interface{}); ok && m["name"] == "file_changed" {
+			t.Errorf("the default prefixes must not survive an explicit %s, got %v", hermesFSPrefixesEnv, m)
+		}
+	}
+	assertWorkspaceEmpty(t, otherDir)
+	if !strings.Contains(logged, "unknown Hermes-side prefix") {
+		t.Errorf("expected the unknown-prefix reason, got:\n%s", logged)
+	}
+}
+
+func TestParseHermesFSPrefixes(t *testing.T) {
+	if got := parseHermesFSPrefixes(""); len(got) != 2 || got[0] != "/opt/data/home/" || got[1] != "/opt/data/" {
+		t.Errorf("expected the deployed defaults, longest first, got %v", got)
+	}
+	if got := parseHermesFSPrefixes("   "); len(got) != 2 || got[0] != "/opt/data/home/" {
+		t.Errorf("a blank value must fall back to the defaults, got %v", got)
+	}
+	// A missing trailing slash would leave an absolute remainder ("/x.md") that
+	// safePath refuses, i.e. a silent no-op at the other end of the pipe.
+	if got := parseHermesFSPrefixes("/srv/lya, /srv/other/"); len(got) != 2 ||
+		got[0] != "/srv/lya/" || got[1] != "/srv/other/" {
+		t.Errorf("expected trimmed prefixes with a trailing slash, got %v", got)
+	}
+	// A relative entry could only match by mangling a relative path.
+	if got := parseHermesFSPrefixes("opt/data/,/srv/lya/"); len(got) != 1 || got[0] != "/srv/lya/" {
+		t.Errorf("expected the non-absolute entry to be dropped, got %v", got)
+	}
+	if got := parseHermesFSPrefixes("opt/data/"); len(got) != 2 || got[0] != "/opt/data/home/" {
+		t.Errorf("a list with nothing usable must fall back to the defaults, got %v", got)
 	}
 }

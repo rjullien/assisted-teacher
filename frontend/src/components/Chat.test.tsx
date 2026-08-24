@@ -476,23 +476,40 @@ describe('Chat', () => {
     ws.restore()
   })
 
-  it('mode Desk announces the file tools in the direct sub-mode, and still inlines the file', async () => {
+  // Production trace (mode Desk, "Mise à jour directe", file
+  // Test_folders/test_nvx_cours.md): announcing read_file/write_file/patch_file
+  // made Lya search HER filesystem ("Le fichier n'existe pas dans /opt/data. Je
+  // vérifie aussi le dossier home") and spend the whole exchange on it. She
+  // never calls the declared tools, so the prompt must point her at the inlined
+  // content and at a write on the same relative path instead.
+  it('mode Desk tells the direct sub-mode not to search its own filesystem, and never names a tool', async () => {
     const ws = trackWebSockets()
-    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya' })
+    await renderConnected({
+      currentFile: 'Test_folders/test_nvx_cours.md',
+      fileContent: SAMPLE_FILE,
+      agent: 'lya',
+    })
 
     fireEvent.click(screen.getByText('Mise à jour directe'))
     await waitFor(() => {
       expect(screen.getByText('Mise à jour directe')).toHaveAttribute('aria-pressed', 'true')
     })
 
-    const payload = await sendPrompt(ws.instances, 'Mets à jour ce cours')
+    const payload = await sendPrompt(ws.instances, 'Ajoute une analyse de la politique us')
 
     expect(payload.content).not.toContain("tu n'as pas accès à mon dossier de travail")
-    expect(payload.content).toContain('patch_file')
-    // The v1.9.1 fallback stays: the content travels even with the tools armed,
-    // because a gateway that drops `tools` must still be able to answer.
+    // No tool name: they are declared in the request but Hermes ignores them,
+    // and announcing them is what sent her hunting in /opt/data.
+    expect(payload.content).not.toContain('read_file')
+    expect(payload.content).not.toContain('write_file')
+    expect(payload.content).not.toContain('patch_file')
+    expect(payload.content).toContain("ne cherche pas ce fichier sur ta propre machine, il n'y est pas")
+    // What actually works: write the same relative path, the backend mirrors it.
+    expect(payload.content).toContain('écris le fichier au même chemin relatif "Test_folders/test_nvx_cours.md"')
+    expect(payload.content).toContain('recopiée automatiquement dans mon dossier de travail')
+    // The v1.9.1 fallback stays: the content travels, and it is the reference.
     expect(payload.content).toContain('The quick brown fox jumps over the lazy dog.')
-    expect(payload.content.trimEnd().endsWith('Mets à jour ce cours')).toBe(true)
+    expect(payload.content.trimEnd().endsWith('Ajoute une analyse de la politique us')).toBe(true)
 
     ws.restore()
   })
@@ -710,7 +727,7 @@ describe('Chat', () => {
 
   // --- Empty working file ---------------------------------------------------
 
-  it('announces the file tools in the direct sub-mode even when the file is empty', async () => {
+  it('tells the direct sub-mode where to write even when the file is empty', async () => {
     const ws = trackWebSockets()
     // A file just created from the tree: nothing to inline, and the most direct
     // reading of "complète ce fichier".
@@ -724,8 +741,10 @@ describe('Chat', () => {
     const payload = await sendPrompt(ws.instances, 'Complète ce fichier')
 
     expect(payload.deskMode).toBe('direct')
-    expect(payload.content).toContain('write_file')
     expect(payload.content).toContain('encore vide')
+    expect(payload.content).toContain('écris-le au même chemin relatif "B1/vide.md"')
+    expect(payload.content).toContain('recopiée automatiquement dans mon dossier de travail')
+    expect(payload.content).not.toContain('write_file')
     expect(payload.content).not.toContain("tu n'as pas accès à mon dossier de travail")
 
     ws.restore()
