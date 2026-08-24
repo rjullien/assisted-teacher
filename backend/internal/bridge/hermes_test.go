@@ -1173,8 +1173,18 @@ func TestHermesBridge_ToolLoop_LoopCap(t *testing.T) {
 
 	assertNoErrorEvent(t, events)
 	done := doneEvent(t, events)
-	if got := hermes.requestCount(); got != maxToolLoops {
-		t.Errorf("expected exactly %d Hermes requests, got %d", maxToolLoops, got)
+	// Asserted against a literal, NOT against maxToolLoops: comparing the code
+	// to its own constant is tautological — raising the constant would raise the
+	// expectation with it and the test could never fail. The cap is what stops a
+	// looping model from burning tokens, so its value is part of the contract and
+	// changing it must break a test deliberately.
+	const wantRequests = 8
+	if maxToolLoops != wantRequests {
+		t.Fatalf("maxToolLoops changed to %d: raising the cap multiplies the tokens a looping "+
+			"model can burn. Update wantRequests only if that is intended.", maxToolLoops)
+	}
+	if got := hermes.requestCount(); got != wantRequests {
+		t.Errorf("expected exactly %d Hermes requests, got %d", wantRequests, got)
 	}
 	if !strings.Contains(done.Reply, "Boucle d'outils interrompue") {
 		t.Errorf("expected the French terminal message in done.Reply, got %q", done.Reply)
