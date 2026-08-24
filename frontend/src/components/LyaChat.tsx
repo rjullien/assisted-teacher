@@ -191,16 +191,28 @@ export default function LyaChat({ userName, messages: externalMessages, onMessag
     setMessages((prev) => [...prev, userMessage])
     setIsLoading(true)
 
-    // On the first message, include the user's name so Lya knows who she's talking to
-    let content = input.trim()
-    if (messages.length === 0 && userName) {
-      content = `[Je suis ${userName}]\n\n${content}`
-    }
+    // Identity is sent on EVERY message, as a system line.
+    //
+    // It used to be smuggled into the text of the first message only
+    // (`[Je suis X]` when messages.length === 0). That could not work:
+    //
+    //  - the backend sends a single turn per request — callHermesStream builds
+    //    [system?, user] and never replays history — so from the second message
+    //    on, nothing carried the identity;
+    //  - `messages` is now persisted in App, so length only returns to 0 on a
+    //    full page reload, making the one-shot prefix even rarer;
+    //  - /api/me resolves asynchronously, so a fast first message went out with
+    //    userName still empty, and the name was then never sent again.
+    //
+    // A one-line system message is not a persona or behaviour instruction, so
+    // this keeps the "pure conversation" intent of this mode.
+    const system = userName ? `Tu parles avec ${userName}.` : ''
 
-    // No system prompt — pure conversation
     wsRef.current.send({
       type: 'prompt',
-      content,
+      content: input.trim(),
+      system,
+      mode: 'lya',
     })
     setInput('')
   }

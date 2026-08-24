@@ -52,6 +52,7 @@ interface MobileLayoutProps {
   /** Held by App: the chat tab is unmounted every time another tab is shown. */
   chatSession?: ChatSession
   onChatSessionChange?: (session: ChatSession) => void
+  userName?: string
 }
 
 export default function MobileLayout({
@@ -72,6 +73,7 @@ export default function MobileLayout({
   onFileChanged,
   chatSession,
   onChatSessionChange,
+  userName,
 }: MobileLayoutProps) {
   const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<Tab>('files')
@@ -114,6 +116,7 @@ export default function MobileLayout({
             onFileChanged={onFileChanged}
             session={chatSession}
             onSessionChange={onChatSessionChange}
+            userName={userName}
           />
         )}
         {activeTab === 'programme' && (

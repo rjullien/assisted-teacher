@@ -64,6 +64,14 @@ func main() {
 		if displayName == "" {
 			displayName = user
 		}
+		// Diagnostic: with no identity at all the assistant cannot know who it is
+		// talking to, and the cause is upstream (Traefik forwardAuth must list
+		// Remote-Name / Remote-User in authResponseHeaders, and the Authelia user
+		// needs a displayname). Logged without any PII — presence only.
+		if displayName == "" {
+			log.Printf("api/me: no Authelia identity headers (Remote-Name and Remote-User both absent) " +
+				"— check forwardauth-authelia authResponseHeaders")
+		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		fmt.Fprintf(w, `{"name":%q,"user":%q,"email":%q}`, displayName, user, email)
 	})

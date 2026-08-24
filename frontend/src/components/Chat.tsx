@@ -88,6 +88,8 @@ interface ChatProps {
   /** Lifted state. When omitted, Chat keeps its own (used by tests). */
   session?: ChatSession
   onSessionChange?: (session: ChatSession) => void
+  /** Display name from Authelia, so the assistant knows who it is helping. */
+  userName?: string
 }
 
 // --- System prompt builder ---
@@ -157,6 +159,7 @@ export default function Chat({
   onFileChanged,
   session: externalSession,
   onSessionChange,
+  userName,
 }: ChatProps) {
   const { t } = useI18n()
 
@@ -221,8 +224,14 @@ export default function Chat({
   // Track if current job wrote files (for pi)
   const jobWroteFiles = useRef(false)
 
-  // Memoize system prompt so it only changes when programme changes
-  const systemPrompt = useMemo(() => buildSystemPrompt(programme), [programme])
+  // Memoize system prompt so it only changes when programme or user changes.
+  // The identity line is appended on every request, not sent once: the backend
+  // replays no history (callHermesStream sends a single [system?, user] turn),
+  // so anything stated only once is lost on the next message.
+  const systemPrompt = useMemo(() => {
+    const base = buildSystemPrompt(programme)
+    return userName ? `${base}\n\nTu parles avec ${userName}.` : base
+  }, [programme, userName])
 
   const handleStreamEvent = useCallback((ev: StreamEvent) => {
     // Any event means the resubscribe (if any) landed.
