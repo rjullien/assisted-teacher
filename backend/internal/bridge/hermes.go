@@ -407,7 +407,11 @@ func (b *HermesBridge) startJob(content, systemPrompt, mode string) *Job {
 		defer cancel()
 		defer close(job.doneCh)
 		start := time.Now()
-		err := b.callHermesStream(ctx, job, content, systemPrompt)
+		// Default mode to "desk" if empty
+		if mode == "" {
+			mode = "desk"
+		}
+		err := b.callHermesStream(ctx, job, content, systemPrompt, mode)
 		durationMs := time.Since(start).Milliseconds()
 		status := "done"
 		if job.status == JobRunning {
@@ -429,9 +433,6 @@ func (b *HermesBridge) startJob(content, systemPrompt, mode string) *Job {
 			status = "error"
 		}
 		// agent_usage log line
-		if mode == "" {
-			mode = "desk"
-		}
 		log.Printf("agent_usage agent=lya mode=%s jobId=%s promptLen=%d durationMs=%d status=%s",
 			mode, job.ID, len(content), durationMs, status)
 	}()
@@ -439,7 +440,8 @@ func (b *HermesBridge) startJob(content, systemPrompt, mode string) *Job {
 }
 
 // callHermesStream does POST /v1/chat/completions stream:true to Lya.
-func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, systemPrompt string) error {
+// mode controls file-write behavior: only "desk" mode writes files to disk.
+func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, systemPrompt, mode string) error {
 	messages := []map[string]string{}
 	if systemPrompt != "" {
 		messages = append(messages, map[string]string{"role": "system", "content": systemPrompt})
@@ -526,15 +528,18 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 
 			// If this is a file-write tool with status "done", write file to disk
 			// and emit a file_changed event (like PiBridge does).
-			if toolMap, ok := tool.(map[string]interface{}); ok {
-				if relPath := b.handleToolFileWrite(toolMap); relPath != "" {
-					job.append(StreamEvent{
-						Type: "tool",
-						Tool: map[string]interface{}{
-							"name": "file_changed",
-							"path": relPath,
-						},
-					})
+			// Only write files in "desk" mode — Lya mode must never write.
+			if mode == "desk" {
+				if toolMap, ok := tool.(map[string]interface{}); ok {
+					if relPath := b.handleToolFileWrite(toolMap); relPath != "" {
+						job.append(StreamEvent{
+							Type: "tool",
+							Tool: map[string]interface{}{
+								"name": "file_changed",
+								"path": relPath,
+							},
+						})
+					}
 				}
 			}
 			continue

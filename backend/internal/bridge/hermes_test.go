@@ -401,3 +401,78 @@ func TestHermesBridge_FileWrite_PathTraversal(t *testing.T) {
 		t.Error("file should NOT have been written outside workspace")
 	}
 }
+
+func TestHermesBridge_FileWrite_LyaMode(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Mock server emits a write_file tool progress event with valid path and content
+	hermes := mockHermesFileWriteServer("write_file", "test/output.md", "# Hello from Lya", "done")
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	server := httptest.NewServer(http.HandlerFunc(b.HandleWebSocket))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("ws dial failed: %v", err)
+	}
+	defer ws.Close()
+
+	// Send prompt with mode="lya" — file writes must be skipped
+	msg, _ := json.Marshal(map[string]string{
+		"type":    "prompt",
+		"content": "Write a file",
+		"mode":    "lya",
+	})
+	ws.WriteMessage(websocket.TextMessage, msg)
+
+	// Collect events
+	var events []StreamEvent
+	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		_, data, err := ws.ReadMessage()
+		if err != nil {
+			break
+		}
+		var ev StreamEvent
+		json.Unmarshal(data, &ev)
+		events = append(events, ev)
+		if ev.Type == "done" || ev.Type == "error" {
+			break
+		}
+	}
+
+	// Verify the tool progress event IS still forwarded (Lya sees tool events)
+	foundToolProgress := false
+	for _, ev := range events {
+		if ev.Type == "tool" {
+			if toolMap, ok := ev.Tool.(map[string]interface{}); ok {
+				if toolMap["name"] == "write_file" {
+					foundToolProgress = true
+				}
+			}
+		}
+	}
+	if !foundToolProgress {
+		t.Error("expected the tool progress event to still be forwarded in lya mode")
+	}
+
+	// Verify NO file_changed event was emitted
+	for _, ev := range events {
+		if ev.Type == "tool" {
+			if toolMap, ok := ev.Tool.(map[string]interface{}); ok {
+				if toolMap["name"] == "file_changed" {
+					t.Error("file_changed event should NOT be emitted in lya mode")
+				}
+			}
+		}
+	}
+
+	// Verify the file was NOT written to disk
+	filePath := filepath.Join(tmpDir, "test", "output.md")
+	if _, err := os.Stat(filePath); err == nil {
+		t.Errorf("file should NOT have been written in lya mode, but found at %s", filePath)
+	}
+}
