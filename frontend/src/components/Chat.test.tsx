@@ -1,7 +1,7 @@
 import { screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderWithI18n } from '../test/i18n-wrapper'
-import Chat from './Chat'
+import Chat, { ChatSession, emptyChatSession } from './Chat'
 
 describe('Chat', () => {
   const mockOnInsert = vi.fn()
@@ -16,9 +16,9 @@ describe('Chat', () => {
   })
 
   // Helper: render Chat and wait for WebSocket to connect
-  async function renderConnected(props?: { currentFile?: string | null }) {
+  async function renderConnected(props?: { currentFile?: string | null; userName?: string; session?: ChatSession; onSessionChange?: (s: ChatSession) => void }) {
     const result = renderWithI18n(
-      <Chat {...defaultProps} currentFile={props?.currentFile ?? null} />
+      <Chat {...defaultProps} {...props} currentFile={props?.currentFile ?? null} />
     )
     // Wait for the mock WebSocket onopen (setTimeout 0) to fire
     await act(async () => {
@@ -110,5 +110,116 @@ describe('Chat', () => {
     }
     renderWithI18n(<Chat {...defaultProps} programme={programme} />)
     expect(screen.getByText('Seconde — B1+')).toBeInTheDocument()
+  })
+
+  it('session persists across unmount/remount', async () => {
+    // Use lifted session state to simulate parent-managed persistence.
+    // We pre-populate the session with a message, then verify it survives unmount/remount.
+    const sessionWithMessage: ChatSession = {
+      ...emptyChatSession,
+      messages: [
+        { id: 'msg-1', role: 'user', content: 'Hello from session' },
+        { id: 'msg-2', role: 'assistant', content: 'Hi there!' },
+      ],
+      input: 'draft text',
+    }
+    const onSessionChange = vi.fn()
+
+    // First mount - verify the messages show
+    const { unmount } = renderWithI18n(
+      <Chat {...defaultProps} currentFile="B1/unit5.md" session={sessionWithMessage} onSessionChange={onSessionChange} />
+    )
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(screen.getByText('Hello from session')).toBeInTheDocument()
+    expect(screen.getByText('Hi there!')).toBeInTheDocument()
+    // Draft text is in the textarea
+    expect(screen.getByPlaceholderText("Demandez à l'IA...")).toHaveValue('draft text')
+
+    // Unmount
+    unmount()
+
+    // Remount with the same session object (simulating parent holding state)
+    renderWithI18n(
+      <Chat {...defaultProps} currentFile="B1/unit5.md" session={sessionWithMessage} onSessionChange={onSessionChange} />
+    )
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    // Messages and draft should still be visible
+    expect(screen.getByText('Hello from session')).toBeInTheDocument()
+    expect(screen.getByText('Hi there!')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText("Demandez à l'IA...")).toHaveValue('draft text')
+  })
+
+  it('identity is in every system prompt', async () => {
+    // Track all WebSocket instances created during this test
+    const wsInstances: Array<{ sentMessages: string[]; onmessage: ((ev: MessageEvent) => void) | null }> = []
+    const OrigMock = globalThis.WebSocket as unknown as new (url: string) => { sentMessages: string[]; onmessage: ((ev: MessageEvent) => void) | null; onopen: ((ev: Event) => void) | null; readyState: number }
+
+    // Replace WebSocket with a tracking wrapper
+    const WrappedWS = function (this: unknown, url: string) {
+      const instance = new OrigMock(url)
+      wsInstances.push(instance)
+      return instance
+    } as unknown as typeof WebSocket
+    Object.assign(WrappedWS, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 })
+    Object.defineProperty(WrappedWS, 'prototype', { value: OrigMock.prototype, writable: false })
+    vi.stubGlobal('WebSocket', WrappedWS)
+
+    await renderConnected({ currentFile: 'B1/unit5.md', userName: 'Alice' })
+
+    const textarea = screen.getByPlaceholderText("Demandez à l'IA...")
+
+    // Send first message
+    fireEvent.change(textarea, { target: { value: 'First question' } })
+    fireEvent.click(screen.getByText('Envoyer'))
+
+    await waitFor(() => {
+      expect(screen.getByText('First question')).toBeInTheDocument()
+    })
+
+    // Simulate WS completing the first response via the actual WS instance
+    const lastWs = wsInstances[wsInstances.length - 1]
+    await act(async () => {
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 1, type: 'meta', jobId: 'job1' }) }))
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 2, type: 'done', reply: 'Response 1' }) }))
+    })
+
+    // Wait for loading state to clear (button text returns to "Envoyer")
+    await waitFor(() => {
+      expect(screen.getByText('Envoyer')).toBeInTheDocument()
+    })
+
+    // Send second message (type first so button becomes enabled)
+    fireEvent.change(textarea, { target: { value: 'Second question' } })
+
+    await waitFor(() => {
+      expect(screen.getByText('Envoyer')).not.toBeDisabled()
+    })
+
+    fireEvent.click(screen.getByText('Envoyer'))
+
+    await waitFor(() => {
+      expect(screen.getByText('Second question')).toBeInTheDocument()
+    })
+
+    // Collect all sent payloads
+    const allSent = wsInstances.flatMap((i) => i.sentMessages)
+    const promptPayloads = allSent
+      .map((s) => JSON.parse(s))
+      .filter((p: { type: string }) => p.type === 'prompt')
+
+    expect(promptPayloads.length).toBe(2)
+    expect(promptPayloads[0].system).toContain('Tu parles avec Alice.')
+    expect(promptPayloads[1].system).toContain('Tu parles avec Alice.')
+
+    // Restore original mock
+    vi.stubGlobal('WebSocket', OrigMock)
   })
 })

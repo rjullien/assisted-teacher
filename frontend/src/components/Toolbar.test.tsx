@@ -70,4 +70,18 @@ describe('Toolbar', () => {
     fireEvent.change(select, { target: { value: 'terminale' } })
     expect(mockNiveauChange).toHaveBeenCalledWith('terminale')
   })
+
+  it('shows Pi button only when piAvailable=true', () => {
+    // Without piAvailable (default false/undefined) - Pi button should NOT be visible
+    const { unmount } = renderWithI18n(<Toolbar {...defaultProps} piAvailable={false} />)
+    expect(screen.queryByText('Pi')).not.toBeInTheDocument()
+    unmount()
+
+    // With piAvailable=true - Pi button should be present and clickable
+    renderWithI18n(<Toolbar {...defaultProps} piAvailable={true} />)
+    const piButton = screen.getByText('Pi')
+    expect(piButton).toBeInTheDocument()
+    fireEvent.click(piButton)
+    expect(mockModeChange).toHaveBeenCalledWith('pi')
+  })
 })

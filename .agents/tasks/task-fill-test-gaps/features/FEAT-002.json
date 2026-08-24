@@ -2,7 +2,7 @@
   "id": "FEAT-002",
   "type": "feat",
   "description": "Add priority 1 frontend tests: Chat session persistence, identity in system prompt, and upload path correctness. Plus priority 3 tests: LyaChat rendering/identity, Toolbar pi button, and api.ts AuthWebSocket.",
-  "status": "pending",
+  "status": "completed",
   "steps": [
     "In frontend/src/components/Chat.test.tsx, add a test 'session persists across unmount/remount': render Chat with an external session prop, type a message, unmount, remount with the same session object, verify the message and input draft survive. Uses renderWithI18n and the existing MockWebSocket pattern.",
     "In frontend/src/components/Chat.test.tsx, add a test 'identity is in every system prompt': render Chat with userName='Alice', send two messages via the mock WS, inspect the sentMessages on the MockWebSocket instance, verify both payloads contain system field with 'Tu parles avec Alice'.",
@@ -23,5 +23,5 @@
     "cd frontend && npx vitest --run"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "MockWebSocket instances need to be tracked via a constructor wrapper to simulate WS responses (meta+done events) between messages. Button disabled state depends on input content AND connection status, not just isLoading. The renderWithI18n wrapper from RTL correctly passes through rerender/unmount. All 75 tests pass including 19 new assertions across 4 test files."
 }
