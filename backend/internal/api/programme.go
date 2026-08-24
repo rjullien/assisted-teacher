@@ -17,8 +17,8 @@ func NewProgrammeHandler(workDir string) *ProgrammeHandler {
 
 // validNiveaux restricts which files can be served.
 var validNiveaux = map[string]bool{
-	"seconde":  true,
-	"premiere": true,
+	"seconde":   true,
+	"premiere":  true,
 	"terminale": true,
 }
 

@@ -68,6 +68,12 @@ describe('FileTree', () => {
   it('renders the header', async () => {
     renderWithI18n(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
     expect(screen.getByText('Mes cours')).toBeInTheDocument()
+
+    // Let the initial tree fetch settle. Without this the resolving promise
+    // updates state after the test body returns, outside act().
+    await waitFor(() => {
+      expect(screen.getByText('B1')).toBeInTheDocument()
+    })
   })
 
   it('fetches and displays file tree', async () => {
@@ -137,6 +143,13 @@ describe('FileTree', () => {
 
   it('has new file and new folder buttons in header', async () => {
     renderWithI18n(<FileTree onSelect={mockOnSelect} onRefresh={mockOnRefresh} refreshKey={0} />)
+
+    // Let the initial tree fetch settle. Without this the resolving promise
+    // updates state after the test body returns, outside act().
+    await waitFor(() => {
+      expect(screen.getByText('B1')).toBeInTheDocument()
+    })
+
     // Header buttons for creating at root
     const newFileButtons = screen.getAllByTitle('Nouveau cours')
     expect(newFileButtons.length).toBeGreaterThanOrEqual(1)
