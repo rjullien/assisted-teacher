@@ -42,7 +42,7 @@ ENV WORKSPACE_DIR=/workspace
 ENV PROGRAMMES_DIR=/data/programmes
 
 # Pi configuration
-ENV PI_ENABLED=false
+ENV PI_ENABLED=true
 ENV PI_CMD=pi
 ENV PI_MODELS_JSON=/data/pi-config/models.json
 

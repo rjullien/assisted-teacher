@@ -1,15 +1,15 @@
 {
   "models": [
     {
-      "id": "bifrost",
+      "id": "default",
       "name": "Bifrost (Claude)",
       "provider": "custom",
-      "apiUrl": "http://bifrost.bifrost.svc.cluster.local:8080/v1",
-      "apiKey": "__BIFROST_API_KEY__",
+      "apiUrl": "__LLM_API_URL__",
+      "apiKey": "unused",
       "model": "claude-sonnet-4-20250514",
       "maxTokens": 8192,
       "supportsStreaming": true
     }
   ],
-  "default": "bifrost"
+  "default": "default"
 }
