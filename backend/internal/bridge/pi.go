@@ -17,8 +17,11 @@ import (
 )
 
 // PiBridge handles WebSocket connections for the pi agent.
-// It spawns `pi --mode rpc` as a subprocess per request, translates JSONL
-// events to StreamEvent, and reuses the same Job/Hub infrastructure as Hermes.
+// It spawns `pi --mode rpc` as a subprocess per request, translates RPC
+// events (JSONL on stdout) to StreamEvent, and reuses the same Job/Hub
+// infrastructure as Hermes.
+//
+// Pi RPC protocol docs: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md
 type PiBridge struct {
 	piCmd      string // path to pi binary
 	workDir    string // workspace directory (jail root)
@@ -143,14 +146,7 @@ func (b *PiBridge) startJob(content, systemPrompt, currentFile, mode string) *Jo
 	return job
 }
 
-// piRPCRequest is the JSONL message sent to pi's stdin.
-type piRPCRequest struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Message string `json:"message"`
-}
-
-// runPi spawns `pi --mode rpc` and streams the response.
+// runPi spawns `pi --mode rpc --no-session` and streams the response.
 func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, currentFile string, toolCount *int, toolsUsed *[]string) error {
 	// Build the message: system prompt as preamble + user content
 	var msgBuilder strings.Builder
@@ -165,16 +161,18 @@ func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, c
 
 	args := []string{
 		"--mode", "rpc",
-		"--no-approve",
-		"--no-context-files",
+		"--no-session",
 	}
 	if b.modelsJSON != "" {
-		args = append(args, "--models", b.modelsJSON)
+		args = append(args, "--provider", "custom", "--model", "default")
 	}
 
 	cmd := exec.CommandContext(ctx, b.piCmd, args...)
 	cmd.Dir = b.workDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	// Set PI_MODELS_JSON so pi finds the custom provider config
+	cmd.Env = append(cmd.Environ(), "PI_MODELS_JSON="+b.modelsJSON)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -189,20 +187,20 @@ func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, c
 		return fmt.Errorf("start pi: %w", err)
 	}
 
-	// Send the prompt
-	req := piRPCRequest{
-		ID:      job.ID,
-		Type:    "prompt",
-		Message: msgBuilder.String(),
+	// Send the prompt command (pi RPC protocol)
+	promptCmd := map[string]interface{}{
+		"type":    "prompt",
+		"message": msgBuilder.String(),
 	}
-	reqBytes, _ := json.Marshal(req)
+	reqBytes, _ := json.Marshal(promptCmd)
 	reqBytes = append(reqBytes, '\n')
 	if _, err := stdin.Write(reqBytes); err != nil {
 		return fmt.Errorf("write stdin: %w", err)
 	}
-	stdin.Close()
+	// Don't close stdin yet — pi expects the pipe to stay open for potential
+	// follow-up commands. We'll let it close when the process exits.
 
-	// Read JSONL responses from stdout
+	// Read JSONL events from stdout (pi RPC protocol)
 	var full strings.Builder
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
@@ -216,108 +214,144 @@ func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, c
 			continue
 		}
 
-		var ev piEvent
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		var raw map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			log.Printf("pi: unparseable line: %s", truncateStr(line, 100))
 			continue
 		}
 
-		switch ev.Type {
-		case "text_delta":
-			text := ev.Delta
-			if text != "" {
-				full.WriteString(text)
-				job.append(StreamEvent{Type: "delta", Text: text})
-			}
+		evType, _ := raw["type"].(string)
 
-		case "tool_start":
-			*toolCount++
-			name := ev.ToolName
-			if name != "" {
-				found := false
-				for _, t := range *toolsUsed {
-					if t == name {
-						found = true
-						break
+		switch evType {
+		case "response":
+			// Command acknowledgment. Check for errors.
+			success, _ := raw["success"].(bool)
+			if !success {
+				errMsg, _ := raw["error"].(string)
+				if errMsg == "" {
+					errMsg = "pi rejected the command"
+				}
+				job.append(StreamEvent{Type: "error", Error: errMsg})
+				stdin.Close()
+				_ = cmd.Wait()
+				return nil
+			}
+			// success:true — prompt accepted, events will follow
+
+		case "message_update":
+			// Streaming delta from the assistant
+			ame, _ := raw["assistantMessageEvent"].(map[string]interface{})
+			if ame == nil {
+				continue
+			}
+			deltaType, _ := ame["type"].(string)
+			switch deltaType {
+			case "text_delta":
+				delta, _ := ame["delta"].(string)
+				if delta != "" {
+					full.WriteString(delta)
+					job.append(StreamEvent{Type: "delta", Text: delta})
+				}
+			case "toolcall_start":
+				toolName, _ := ame["toolName"].(string)
+				*toolCount++
+				if toolName != "" {
+					found := false
+					for _, t := range *toolsUsed {
+						if t == toolName {
+							found = true
+							break
+						}
+					}
+					if !found {
+						*toolsUsed = append(*toolsUsed, toolName)
 					}
 				}
-				if !found {
-					*toolsUsed = append(*toolsUsed, name)
+			}
+
+		case "tool_execution_start":
+			toolName, _ := raw["toolName"].(string)
+			args, _ := raw["args"].(map[string]interface{})
+			path := ""
+			if args != nil {
+				if p, ok := args["path"].(string); ok {
+					path = p
+				} else if p, ok := args["file_path"].(string); ok {
+					path = p
 				}
 			}
-			job.append(StreamEvent{Type: "tool", Tool: map[string]any{
-				"name":   name,
+			job.append(StreamEvent{Type: "tool", Tool: map[string]interface{}{
+				"name":   toolName,
 				"status": "running",
-				"path":   ev.Path,
+				"path":   path,
 			}})
 
-		case "tool_end":
-			name := ev.ToolName
-			path := ev.Path
-			job.append(StreamEvent{Type: "tool", Tool: map[string]any{
-				"name":   name,
+		case "tool_execution_end":
+			toolName, _ := raw["toolName"].(string)
+			args, _ := raw["args"].(map[string]interface{})
+			path := ""
+			if args != nil {
+				if p, ok := args["path"].(string); ok {
+					path = p
+				} else if p, ok := args["file_path"].(string); ok {
+					path = p
+				}
+			}
+			job.append(StreamEvent{Type: "tool", Tool: map[string]interface{}{
+				"name":   toolName,
 				"status": "done",
 				"path":   path,
 			}})
-			// Track file writes for file_changed events
-			if (name == "write" || name == "edit") && path != "" {
+			// Track file writes
+			if (toolName == "write" || toolName == "edit") && path != "" {
 				mu.Lock()
 				filesWritten[path] = true
 				mu.Unlock()
 			}
 
-		case "done", "complete":
-			// Emit file_changed for each file pi wrote
+		case "agent_end", "agent_settled":
+			// Agent finished — emit file_changed for written files, then done
 			mu.Lock()
 			for path := range filesWritten {
-				job.append(StreamEvent{Type: "tool", Tool: map[string]any{
+				job.append(StreamEvent{Type: "tool", Tool: map[string]interface{}{
 					"name": "file_changed",
 					"path": path,
 				}})
 			}
 			mu.Unlock()
 			job.append(StreamEvent{Type: "done", Reply: full.String()})
-			_ = cmd.Wait()
-			return nil
-
-		case "error":
-			job.append(StreamEvent{Type: "error", Error: ev.ErrorMsg, Detail: ev.Detail})
+			stdin.Close()
 			_ = cmd.Wait()
 			return nil
 		}
 	}
 
-	// If scanner exits without done/error, the process ended
-	if err := cmd.Wait(); err != nil {
-		// If we got some text, emit done anyway
-		if full.Len() > 0 {
-			mu.Lock()
-			for path := range filesWritten {
-				job.append(StreamEvent{Type: "tool", Tool: map[string]any{
-					"name": "file_changed",
-					"path": path,
-				}})
-			}
-			mu.Unlock()
-			job.append(StreamEvent{Type: "done", Reply: full.String()})
-			return nil
-		}
-		return fmt.Errorf("pi exited: %w", err)
-	}
+	// Scanner exited (process ended without agent_end)
+	scanErr := scanner.Err()
+	stdin.Close()
+	cmdErr := cmd.Wait()
 
-	// Clean exit with content
 	if full.Len() > 0 {
+		// Got some text — emit done
 		mu.Lock()
 		for path := range filesWritten {
-			job.append(StreamEvent{Type: "tool", Tool: map[string]any{
+			job.append(StreamEvent{Type: "tool", Tool: map[string]interface{}{
 				"name": "file_changed",
 				"path": path,
 			}})
 		}
 		mu.Unlock()
 		job.append(StreamEvent{Type: "done", Reply: full.String()})
-	} else {
-		job.append(StreamEvent{Type: "done", Reply: ""})
+		return nil
 	}
+
+	if scanErr != nil {
+		return fmt.Errorf("pi stdout scan: %w", scanErr)
+	}
+	if cmdErr != nil {
+		return fmt.Errorf("pi exited: %w", cmdErr)
+	}
+	job.append(StreamEvent{Type: "done", Reply: ""})
 	return nil
 }
 
@@ -340,14 +374,4 @@ func (b *PiBridge) streamToWS(conn *websocket.Conn, job *Job, after int) {
 			return
 		}
 	}
-}
-
-// piEvent is a JSONL event from pi --mode rpc stdout.
-type piEvent struct {
-	Type     string `json:"type"`
-	Delta    string `json:"delta,omitempty"`
-	ToolName string `json:"toolName,omitempty"`
-	Path     string `json:"path,omitempty"`
-	ErrorMsg string `json:"error,omitempty"`
-	Detail   string `json:"detail,omitempty"`
 }
