@@ -1,29 +1,17 @@
 {
   "task_id": "task-hermes-file-tools",
-  "task_description": "Give Lya real file access on the backend in mode Desk: make the Hermes bridge multi-turn (OpenAI-style function calling) and implement read_file, write_file and patch_file tools jailed to WORKSPACE_DIR, so the teacher can say 'update this file' and Lya can request it, read it and complete it. Must degrade silently to today's single-turn behaviour if Hermes ignores the tools parameter, must not touch mode Lya or mode Pi, and must not remove the v1.9.1 prompt inlining fallback. Branch: feat/hermes-file-tools.",
+  "task_description": "Give Lya real file access on the backend in mode Desk: make the Hermes bridge multi-turn (OpenAI-style function calling) and implement read_file, write_file and patch_file tools jailed to WORKSPACE_DIR, so the teacher can say 'update this file' and Lya can request it, read it and complete it. Mode Desk gets two sub-modes (copie/insertion and mise à jour directe, the latter showing the working file at the top of the panel). Must degrade silently to today's single-turn behaviour if Hermes ignores the tools parameter, must not touch mode Lya or mode Pi, and must not remove the v1.9.1 prompt inlining fallback. Branch: feat/hermes-file-tools.",
   "status": "in_progress",
-  "feature_order": [
-    "FEAT-001",
-    "FEAT-002",
-    "FEAT-003"
-  ],
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004"],
   "blocked_reason": null,
   "user_steering": [
     {
-      "received_during": "FEAT-001",
       "verbatim_fr": "En fait en mode desk ia il faut deux mode. Un mode actuel avec copie et insertion et un mode update direct du fichier dans ce mode tu affiches le fichier de travail en haut du mode desk",
-      "interpretation": "Mode Desk must expose two selectable sub-modes: (a) the current behaviour where Lya answers in the chat and the teacher copies/inserts the result manually, and (b) a 'mise a jour directe' sub-mode where Lya writes the working file itself via the new backend file tools. In sub-mode (b) the Desk panel must display the current working file (its path) at the top of the panel so the teacher always sees which file will be modified.",
-      "impact": "Not covered by FEAT-002 (backend multi-turn tool loop) nor FEAT-003 (tool event labels). Needs a new frontend feature: a sub-mode toggle in Chat.tsx sent to the backend alongside mode:\"desk\", a working-file header in the Desk panel, fr/en i18n strings, and gating of the direct-write path on that sub-mode. The backend write interception (handleToolFileWrite, gated on mode==\"desk\") likely needs to honour the sub-mode flag too so the copy/insert mode never mutates files.",
-      "status": "not_implemented_here",
-      "note": "Recorded by the FEAT-001 sub-agent, which is scoped to baseline verification only and made no source changes. The planner should add this as a new feature (e.g. FEAT-004) or amend FEAT-003 before implementation."
+      "handled_by": "FEAT-004 (done, commit 8d37559): sous-modes « Copie / insertion » (défaut, aucune écriture) et « Mise à jour directe » (outils fichiers actifs, fichier de travail affiché en haut du panneau Desk)."
     },
     {
-      "received_during": "FEAT-001",
       "verbatim_fr": "Release quand les tests sont ok",
-      "interpretation": "Once the whole task's tests are green, ship a release following AGENTS.md: bump version.json, commit 'release: vX.Y.Z' on main, tag vX.Y.Z, push the tag, then create the GitHub release. Current version is 1.9.1; this task adds a backward-compatible feature so the next version should be the minor bump 1.10.0.",
-      "impact": "Cannot be done by a feature sub-agent: AGENTS.md requires the release to happen from a clean main after the feature branch is merged (feature branch -> PR -> squash merge), and this sub-agent is explicitly forbidden to bump version.json, tag, release or push. FEAT-002, FEAT-003 and the Desk sub-mode work are also still pending, so there is nothing feature-complete to release yet.",
-      "status": "deferred_to_orchestrator",
-      "note": "Release gate: only after FEAT-002 + FEAT-003 (+ the Desk sub-mode feature) are implemented and both suites are green (backend go build/vet/gofmt/test, frontend vitest + npm run build). The orchestrator owns the push, the PR, the squash merge and the AGENTS.md release procedure."
+      "handled_by": "orchestrator: this agent cannot push, merge, bump version.json or release. Reported upward once all features are green. Next version per AGENTS.md would be the minor bump 1.9.1 -> 1.10.0."
     }
   ]
 }
