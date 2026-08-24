@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeTool, isFileOp, toolLabel } from './tools'
+import { normalizeTool, isFileOp, isToolRunning, toolLabel } from './tools'
 import { t as tFn } from './i18n'
 
 const t = (key: string, params?: Record<string, string | number>) => tFn('fr', key, params)
@@ -168,5 +168,34 @@ describe('isFileOp', () => {
     expect(isFileOp(normalizeTool({ name: 'read_file', status: 'error' }))).toBe(true)
     // Still not a file op: an unrelated tool failing stays a status line.
     expect(isFileOp(normalizeTool({ name: 'web_search', status: 'error' }))).toBe(false)
+  })
+})
+
+describe('isToolRunning', () => {
+  // Both bridges announce a call before executing it: hermes.go sends
+  // status:"running", pi.go sends "running" too and Hermes progress frames use
+  // "started". Treated as terminal, they duplicated every operation in the
+  // thread and prefixed every refusal with a false success.
+  it('is true only before the terminal event', () => {
+    expect(isToolRunning(normalizeTool({ name: 'write_file', path: 'a.md', status: 'running' }))).toBe(true)
+    expect(isToolRunning(normalizeTool({ name: 'read', path: 'a.md', status: 'started' }))).toBe(true)
+    expect(isToolRunning(normalizeTool({ name: 'write_file', path: 'a.md', status: 'done' }))).toBe(false)
+    expect(isToolRunning(normalizeTool({ name: 'write_file', path: 'a.md', status: 'error' }))).toBe(false)
+    // No status at all: nothing says it is still going, so it is not pending.
+    expect(isToolRunning(normalizeTool({ name: 'write_file', path: 'a.md' }))).toBe(false)
+  })
+
+  it('labels a running file tool as in progress, in fr and en', () => {
+    const tEn = (key: string, params?: Record<string, string | number>) => tFn('en', key, params)
+    const writing = normalizeTool({ name: 'write_file', path: 'a.md', status: 'running' })
+    const reading = normalizeTool({ name: 'read_file', path: 'a.md', status: 'running' })
+    expect(toolLabel(writing, t)).toBe('✏️ Écriture de a.md en cours…')
+    expect(toolLabel(reading, t)).toBe('📄 Lecture de a.md en cours…')
+    expect(toolLabel(writing, tEn)).toBe('✏️ Writing a.md…')
+    expect(toolLabel(reading, tEn)).toBe('📄 Reading a.md…')
+    // A failure keeps the failure label whatever else it carries.
+    expect(
+      toolLabel(normalizeTool({ name: 'write_file', path: 'a.md', status: 'error', error: 'boom' }), t)
+    ).toBe('⚠️ Échec sur a.md : boom')
   })
 })

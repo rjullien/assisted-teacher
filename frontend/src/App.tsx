@@ -234,17 +234,38 @@ export default function App() {
 
   const handleFileTreeRefresh = () => setRefreshKey((k) => k + 1)
 
+  // The editor buffer is read through refs, never from the closure.
+  //
+  // handleFileChanged needs the buffer to decide whether reloading would destroy
+  // unsaved edits, but reading it from state put `fileContent` in the callback's
+  // dependency list — and `fileContent` changes on every keystroke (Milkdown's
+  // markdownUpdated is not debounced). The new callback identity travelled
+  // through Chat's onFileChanged prop into handleStreamEvent and into the
+  // WebSocket effect, so every character typed closed the chat socket and opened
+  // a new one: the stream stalled mid-generation and Send silently did nothing
+  // while the new socket was handshaking. Refs keep the guard and the identity.
+  const currentFileRef = useRef(currentFile)
+  currentFileRef.current = currentFile
+  const fileContentRef = useRef(fileContent)
+  fileContentRef.current = fileContent
+  const lastSavedContentRef = useRef(lastSavedContent)
+  lastSavedContentRef.current = lastSavedContent
+
   // Called by Chat when pi or Lya writes a file — reload it in the editor, but
   // never on top of unsaved edits (see shouldReloadBuffer).
-  const handleFileChanged = useCallback(async (path: string) => {
-    if (
-      shouldReloadBuffer({
-        changedPath: path,
-        openFile: currentFile,
-        buffer: fileContent,
-        lastSaved: lastSavedContent,
-      })
-    ) {
+  //
+  // Returns false when the open file changed on disk and the buffer was kept
+  // because it was dirty: the editor then shows something else than the file,
+  // and Chat is the only place able to tell the teacher (see onFileChanged).
+  const handleFileChanged = useCallback(async (path: string): Promise<boolean> => {
+    const openFile = currentFileRef.current
+    const reload = shouldReloadBuffer({
+      changedPath: path,
+      openFile,
+      buffer: fileContentRef.current,
+      lastSaved: lastSavedContentRef.current,
+    })
+    if (reload) {
       const res = await getText(`/api/file?path=${encodeURIComponent(path)}`)
       if (res.ok && res.data !== null) {
         setFileContent(res.data)
@@ -253,7 +274,10 @@ export default function App() {
     }
     // Refresh file tree in case a new file was created
     setRefreshKey((k) => k + 1)
-  }, [currentFile, fileContent, lastSavedContent])
+    // A change to another file (or with nothing open) is not a divergence: there
+    // is no stale buffer for the teacher to reconcile.
+    return reload || path !== openFile
+  }, [])
 
   if (isMobile) {
     return (

@@ -3,6 +3,7 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -812,6 +813,28 @@ func assistantToolCallIDs(t *testing.T, req map[string]interface{}) []string {
 	return out
 }
 
+// assistantToolCallArgs returns the arguments string of every tool call echoed
+// in the assistant messages, in order.
+func assistantToolCallArgs(t *testing.T, req map[string]interface{}) []string {
+	t.Helper()
+	raw, _ := req["messages"].([]interface{})
+	var out []string
+	for _, m := range raw {
+		msg, ok := m.(map[string]interface{})
+		if !ok || msg["role"] != "assistant" {
+			continue
+		}
+		calls, _ := msg["tool_calls"].([]interface{})
+		for _, c := range calls {
+			call, _ := c.(map[string]interface{})
+			fn, _ := call["function"].(map[string]interface{})
+			args, _ := fn["arguments"].(string)
+			out = append(out, args)
+		}
+	}
+	return out
+}
+
 func hasFileChanged(events []StreamEvent, path string) bool {
 	for _, ev := range events {
 		if ev.Type != "tool" {
@@ -1568,6 +1591,127 @@ func TestHermesBridge_ToolLoop_ToolResultBudget(t *testing.T) {
 	}
 }
 
+// TestHermesBridge_ToolLoop_BudgetKeepsWriteConfirmations: once the budget is
+// spent, replacing "Fichier X écrit" by the budget notice makes a write that
+// landed indistinguishable from one that did not, and the model's natural
+// recovery is to write the same file again.
+func TestHermesBridge_ToolLoop_BudgetKeepsWriteConfirmations(t *testing.T) {
+	tmpDir := t.TempDir()
+	body := strings.Repeat("x", maxReadFileChars) // exactly at the read cap
+	for _, name := range []string{"a.md", "b.md", "c.md"} {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	turns := []scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_a", name: "read_file", arguments: `{"path":"a.md"}`}}},
+		{toolCalls: []scriptedToolCall{{id: "call_b", name: "read_file", arguments: `{"path":"b.md"}`}}},
+		{toolCalls: []scriptedToolCall{{id: "call_c", name: "read_file", arguments: `{"path":"c.md"}`}}},
+		{toolCalls: []scriptedToolCall{{id: "call_w", name: "write_file",
+			arguments: `{"path":"d.md","content":"# D"}`}}},
+		{text: "Fichier écrit."},
+	}
+	hermes := newScriptedHermes(turns, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runHermesJobFile(t, b, "Lis trois fichiers puis écris d.md", "desk", deskModeDirect, "d.md")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	results := toolResultContents(t, hermes.request(t, 4))
+	if len(results) != 4 {
+		t.Fatalf("expected 4 tool results in the last request, got %d", len(results))
+	}
+	// The three reads consumed the whole budget, so a further READ would be cut…
+	confirmation := results[3]
+	if strings.Contains(confirmation, "budget de contexte") {
+		t.Errorf("the write confirmation must survive an exhausted budget, got %q", confirmation)
+	}
+	if !strings.Contains(confirmation, "d.md") || !strings.Contains(confirmation, "écrit") {
+		t.Errorf("expected the write confirmation to reach the model, got %q", confirmation)
+	}
+}
+
+// TestHermesBridge_ToolLoop_EchoedWriteArgumentsAreShrunk: the assistant message
+// that must precede the tool results carries the model's own arguments, i.e. the
+// whole file on a write_file, and it is resent on every later turn. Echoing it
+// verbatim kept the context-overflow path open even though every tool RESULT is
+// budgeted.
+func TestHermesBridge_ToolLoop_EchoedWriteArgumentsAreShrunk(t *testing.T) {
+	tmpDir := t.TempDir()
+	longContent := strings.Repeat("é", 10000) // multi-byte on purpose
+	args, err := json.Marshal(map[string]string{"path": "gros.md", "content": longContent})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "write_file", arguments: string(args)}}},
+		{text: "C'est écrit."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runDeskDirectJob(t, b, "Écris gros.md")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	// The shrink is about the HISTORY only: the file on disk keeps every character.
+	data, err := os.ReadFile(filepath.Join(tmpDir, "gros.md"))
+	if err != nil || string(data) != longContent {
+		t.Fatalf("expected the full content to be written, got %d bytes / %v", len(data), err)
+	}
+
+	echoed := assistantToolCallArgs(t, hermes.request(t, 1))
+	if len(echoed) != 1 {
+		t.Fatalf("expected one echoed tool call, got %d", len(echoed))
+	}
+	if n := len([]rune(echoed[0])); n > maxEchoedArgsChars {
+		t.Errorf("echoed arguments = %d runes, expected at most %d", n, maxEchoedArgsChars)
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal([]byte(echoed[0]), &decoded); err != nil {
+		t.Fatalf("echoed arguments must stay valid JSON, got %v (%q)", err, truncateStr(echoed[0], 80))
+	}
+	if decoded["path"] != "gros.md" {
+		t.Errorf("expected the path to survive the shrink, got %q", decoded["path"])
+	}
+	if !strings.Contains(decoded["content"], "tronqué dans l'historique") {
+		t.Errorf("expected the content to be marked as truncated, got %q", truncateStr(decoded["content"], 80))
+	}
+}
+
+func TestShrinkEchoedArgs(t *testing.T) {
+	short := `{"path":"a.md","content":"# A"}`
+	if got := shrinkEchoedArgs(short); got != short {
+		t.Errorf("short arguments must be echoed verbatim, got %q", got)
+	}
+
+	long := `{"path":"a.md","content":"` + strings.Repeat("x", maxEchoedArgsChars+10) + `"}`
+	got := shrinkEchoedArgs(long)
+	if n := len([]rune(got)); n > maxEchoedArgsChars {
+		t.Errorf("shrunk arguments = %d runes, expected at most %d", n, maxEchoedArgsChars)
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal([]byte(got), &decoded); err != nil {
+		t.Fatalf("shrunk arguments must stay valid JSON: %v", err)
+	}
+	if decoded["path"] != "a.md" {
+		t.Errorf("expected path a.md, got %q", decoded["path"])
+	}
+
+	// Arguments that do not decode were already unusable; they must still be
+	// bounded, because they are echoed on every later turn.
+	broken := `{"path":"a.md","content":"` + strings.Repeat("y", maxEchoedArgsChars+10)
+	if n := len([]rune(shrinkEchoedArgs(broken))); n > maxEchoedArgsChars {
+		t.Errorf("undecodable arguments = %d runes, expected at most %d", n, maxEchoedArgsChars)
+	}
+}
+
 // --- Working file announced by the Desk panel ---
 
 func TestHermesBridge_ToolLoop_WriteOutsideWorkingFileIsFlagged(t *testing.T) {
@@ -1599,6 +1743,35 @@ func TestHermesBridge_ToolLoop_WriteOutsideWorkingFileIsFlagged(t *testing.T) {
 	results := toolResultContents(t, hermes.request(t, 1))
 	if len(results) != 1 || !strings.Contains(results[0], "B1/unite1.md") {
 		t.Errorf("expected the model to be told which file was the working file, got %v", results)
+	}
+}
+
+// TestHermesBridge_ToolLoop_WriteWithNoWorkingFileIsFlagged: with no file open
+// the Desk panel shows "⚠️ Aucun fichier ouvert" while the tools stay armed, so
+// a write lands in a course file the teacher is not looking at. Reporting it as
+// if it were the working file is how a silent edit happens.
+func TestHermesBridge_ToolLoop_WriteWithNoWorkingFileIsFlagged(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "write_file",
+			arguments: `{"path":"surprise.md","content":"# Surprise"}`}}},
+		{text: "J'ai créé un fichier."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runHermesJobSub(t, b, "Crée un cours", "desk", deskModeDirect)
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	if !hasOutsideWorkingFileEvent(events) {
+		t.Errorf("expected the write to be flagged when no working file is announced, got %v", toolEventNames(events))
+	}
+	results := toolResultContents(t, hermes.request(t, 1))
+	if len(results) != 1 || !strings.Contains(results[0], "aucun fichier ouvert") {
+		t.Errorf("expected the model to be told no file was open, got %v", results)
 	}
 }
 
@@ -1719,12 +1892,99 @@ func TestHermesBridge_ToolLoop_IncompleteCallDroppedOnStop(t *testing.T) {
 	if got := hermes.requestCount(); got != 1 {
 		t.Errorf("expected the incomplete call to be dropped without a follow-up request, got %d requests", got)
 	}
-	if names := toolEventNames(events); len(names) != 0 {
-		t.Errorf("expected no tool event for a dropped call, got %v", names)
-	}
 	if _, err := os.Stat(filepath.Join(tmpDir, "a.md")); err == nil {
 		t.Error("an incomplete tool call must not write anything")
 	}
+	// Dropped is not the same as never happened: silently discarded, the teacher
+	// got a done event with an empty reply and no clue why nothing came back.
+	if names := toolEventNames(events); len(names) != 1 || names[0] != "write_file:error" {
+		t.Fatalf("expected one error tool event for the dropped call, got %v", names)
+	}
+	var reason string
+	for _, ev := range events {
+		if m, ok := ev.Tool.(map[string]interface{}); ok && ev.Type == "tool" {
+			if s, _ := m["error"].(string); s != "" {
+				reason = s
+			}
+		}
+	}
+	if !strings.Contains(reason, "finish_reason=length") || !strings.Contains(reason, "rien n'a été exécuté") {
+		t.Errorf("expected the drop reason in the tool event, got %q", reason)
+	}
+}
+
+// TestHermesBridge_ToolLoop_DroppedCallStillCountsAsSupported: the per-job
+// diagnostic is how production settles whether the gateway forwards `tools`.
+// A dropped call left it saying supported=false, i.e. blamed the gateway for a
+// truncation the model produced.
+func TestHermesBridge_ToolLoop_DroppedCallStillCountsAsSupported(t *testing.T) {
+	tmpDir := t.TempDir()
+	hermes := newScriptedHermes([]scriptedTurn{
+		{
+			toolCalls:    []scriptedToolCall{{id: "call_1", name: "write_file", arguments: `{"path":"a.md","content":"# Coup`}},
+			finishReason: "length",
+		},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	logged := captureLog(t, func() {
+		runDeskDirectJob(t, b, "Écris a.md")
+	})
+
+	if !strings.Contains(logged, "hermes: tool_calls supported=true") {
+		t.Errorf("expected supported=true for a call the model did emit, got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "toolCalls=1") {
+		t.Errorf("expected the dropped call to be counted (toolCalls=1), got:\n%s", logged)
+	}
+}
+
+// syncBuffer collects log output while the job goroutine is still writing to it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
+// captureLog redirects the standard logger while fn runs, then waits for the
+// per-job diagnostic line.
+//
+// The line is written by the job goroutine when callHermesStream returns, which
+// happens after the done event has already reached the WebSocket: reading the
+// sink straight after fn is a race that fails one run in a few.
+func captureLog(t *testing.T, fn func()) string {
+	t.Helper()
+	sink := &syncBuffer{}
+	prevWriter, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(sink)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	}()
+
+	fn()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(sink.String(), "tool_calls supported=") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return sink.String()
 }
 
 func TestHermesBridge_ToolLoop_TwoCallsInOneTurn(t *testing.T) {

@@ -76,7 +76,8 @@
     "workingFile": "✍️ Working file: {path}",
     "noWorkingFile": "⚠️ No file open: open a file so Lya can edit it.",
     "updated": "File updated by Lya.",
-    "outsideWorkingFile": "⚠️ outside the working file shown above"
+    "outsideWorkingFile": "⚠️ outside the working file shown above",
+    "bufferKept": "⚠️ The file changed on disk, but your unsaved edits were kept in the editor: the AI's version is not shown and the next save will overwrite it. Save or discard your edits, then reopen the file."
   },
   "programme": {
     "title": "Official Curriculum",
@@ -115,6 +116,8 @@
     "updated": "File updated by Pi.",
     "toolRead": "📄 Reading {path}",
     "toolWrite": "✏️ Writing {path}",
+    "toolReading": "📄 Reading {path}…",
+    "toolWriting": "✏️ Writing {path}…",
     "toolOther": "🔧 {name}",
     "toolUnknown": "🔧 working…",
     "toolFailed": "⚠️ Failed on {path}: {error}",

@@ -230,6 +230,24 @@ const (
 	// upstream context window, and the teacher gets a bare "Échec IA. Réessaie."
 	// instead of an answer. Cutting the results is recoverable; a 4xx is not.
 	maxToolResultChars = 60000
+	// maxConfirmationChars hard-caps a message exempted from the budget (a write
+	// confirmation, a refusal). Those messages quote a path the model chose, and
+	// a model can send a very long one, so "short by construction" is not a
+	// guarantee we can rely on.
+	maxConfirmationChars = 2000
+	// maxEchoedArgsChars bounds the tool-call arguments echoed back in the
+	// assistant message that the OpenAI protocol requires before the tool
+	// results. Those arguments carry the whole file content on a write_file (up
+	// to maxWriteFileChars) and stay in `messages` for every later turn, so two
+	// large writes overflow the upstream context window through the echo even
+	// though every tool RESULT is budgeted. The overflow arrives as a gateway
+	// 4xx, i.e. "Échec IA. Réessaie." for the teacher.
+	maxEchoedArgsChars = 4000
+	// maxEchoedArgFieldChars is how much of a single long string argument
+	// survives in the echo. The model does not need to re-read what it just
+	// wrote — the tool result already told it whether the write landed — it only
+	// needs the call to still be there, with its id, so the protocol holds.
+	maxEchoedArgFieldChars = 1000
 )
 
 // allowedFileExts restricts the file types the tools may touch — on READ as well
@@ -841,6 +859,15 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 			return nil // chunk.error already surfaced as an error event
 		}
 
+		// A call dropped by the finish_reason cross-check still proves the gateway
+		// forwarded `tools` and the model tried to use them. Leaving it out of the
+		// diagnostic logged supported=false for a gateway that does support tool
+		// calls — the exact misattribution that line exists to prevent.
+		if turn.droppedCalls > 0 {
+			sawToolCalls = true
+			toolCallCount += turn.droppedCalls
+		}
+
 		if len(turn.toolCalls) == 0 {
 			// Plain text answer: exactly the pre-tool-loop behaviour.
 			if turn.sawDone {
@@ -867,8 +894,11 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 				"id":   tc.id,
 				"type": "function",
 				"function": map[string]interface{}{
-					"name":      tc.name,
-					"arguments": tc.args.String(),
+					"name": tc.name,
+					// Shrunk, not verbatim: see shrinkEchoedArgs. The call still has to
+					// be echoed (the protocol requires it before the tool results), but
+					// a whole rewritten course file does not have to be echoed with it.
+					"arguments": shrinkEchoedArgs(tc.args.String()),
 				},
 			})
 		}
@@ -898,7 +928,10 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 				messages = append(messages, map[string]interface{}{
 					"role":         "tool",
 					"tool_call_id": tc.id,
-					"content":      budgetToolResult("Erreur : "+execErr.Error(), &toolResultChars),
+					// A refusal is exempt from the budget: it is short, and a model told
+					// "Résultat non transmis" instead of "old_string introuvable" retries
+					// the very call that cannot work.
+					"content": budgetToolResult("Erreur : "+execErr.Error(), &toolResultChars, true),
 				})
 				continue
 			}
@@ -906,7 +939,11 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 			log.Printf("hermes: tool %s path=%q ok (%d chars returned)", tc.name, path, len(result))
 			if outside {
 				log.Printf("hermes: tool %s wrote %q, outside the announced working file %q", tc.name, path, currentFile)
-				result += fmt.Sprintf("\n\nAttention : le fichier de travail de l'enseignant est %s, et tu viens de modifier %s. Dis-le explicitement dans ta réponse.", currentFile, path)
+				if currentFile == "" {
+					result += fmt.Sprintf("\n\nAttention : l'enseignant n'a aucun fichier ouvert dans son éditeur, et tu viens de modifier %s. Dis-le explicitement dans ta réponse.", path)
+				} else {
+					result += fmt.Sprintf("\n\nAttention : le fichier de travail de l'enseignant est %s, et tu viens de modifier %s. Dis-le explicitement dans ta réponse.", currentFile, path)
+				}
 			}
 			job.append(StreamEvent{Type: "tool", Tool: toolEventPayload(tc.name, path, "done", "", outside)})
 			if changedPath != "" {
@@ -921,7 +958,11 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 			messages = append(messages, map[string]interface{}{
 				"role":         "tool",
 				"tool_call_id": tc.id,
-				"content":      budgetToolResult(result, &toolResultChars),
+				// Only read results can be large enough to be worth cutting, and only
+				// they can be cut without lying: a write confirmation replaced by the
+				// budget notice makes a landed write indistinguishable from a suppressed
+				// one, and the model then rewrites the file it just wrote.
+				"content": budgetToolResult(result, &toolResultChars, tc.name != "read_file"),
 			})
 		}
 	}
@@ -978,17 +1019,60 @@ func toolEventPayload(name, path, status, errMsg string, outsideWorkingFile bool
 // outsideWorkingFile reports a write landing somewhere else than the file the
 // Desk panel announces as the working file.
 //
-// Only meaningful for writes, and only when a working file is known: reads are
-// harmless anywhere in the workspace, and with no file open there is nothing to
-// deviate from.
+// Only meaningful for writes: reads are harmless anywhere in the workspace.
+// With no working file announced every write is flagged, because the panel is
+// then showing "⚠️ Aucun fichier ouvert" while the tools stay armed — returning
+// false there reported a write in an arbitrary course file as if it were the
+// file the teacher was looking at.
 func outsideWorkingFile(toolName, path, currentFile string) bool {
-	if currentFile == "" || path == "" {
+	if path == "" {
 		return false
 	}
 	if toolName != "write_file" && toolName != "patch_file" {
 		return false
 	}
+	if currentFile == "" {
+		return true
+	}
 	return filepath.Clean(path) != filepath.Clean(currentFile)
+}
+
+// shrinkEchoedArgs shortens the long string arguments of a tool call before it
+// is echoed back in the assistant message.
+//
+// The echo is mandatory (the OpenAI protocol wants the assistant tool_calls
+// message before the matching tool results) but its content is not: a
+// write_file carries the whole file, up to maxWriteFileChars, and it is resent
+// on every following turn. Budgeting the results while echoing the arguments
+// verbatim left the context-overflow path wide open on writes.
+//
+// The result stays valid JSON with the same keys, so a gateway that parses it
+// still sees a well-formed call. Arguments that do not decode are truncated as
+// an opaque string — they were already unusable.
+func shrinkEchoedArgs(rawArgs string) string {
+	runes := []rune(rawArgs)
+	if len(runes) <= maxEchoedArgsChars {
+		return rawArgs
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal([]byte(rawArgs), &decoded); err != nil {
+		return string(runes[:maxEchoedArgsChars])
+	}
+	for key, value := range decoded {
+		s, ok := value.(string)
+		if !ok {
+			continue
+		}
+		if sr := []rune(s); len(sr) > maxEchoedArgFieldChars {
+			decoded[key] = string(sr[:maxEchoedArgFieldChars]) +
+				"…[tronqué dans l'historique : cet argument a déjà été transmis à l'outil]"
+		}
+	}
+	out, err := json.Marshal(decoded)
+	if err != nil {
+		return string(runes[:maxEchoedArgsChars])
+	}
+	return string(out)
 }
 
 // budgetToolResult caps the CUMULATIVE size of the tool results fed back to
@@ -1000,7 +1084,23 @@ func outsideWorkingFile(toolName, path, currentFile string) bool {
 // "Échec IA. Réessaie." for the teacher, with the work of the previous turns
 // lost. A cut result is something the model can still work with, and the notice
 // tells it what to do instead of asking for the file again.
-func budgetToolResult(result string, used *int) string {
+//
+// alwaysDeliver marks a terminal message — a write confirmation or a refusal —
+// which must reach the model whatever the budget: those are the only way it can
+// tell a landed write from a suppressed one, and once told "Résultat non
+// transmis" the natural recovery is to write the same file again. They are still
+// counted against the budget (so the reads that follow shrink accordingly) and
+// hard-capped at maxConfirmationChars, since they quote a path the model chose.
+func budgetToolResult(result string, used *int, alwaysDeliver bool) string {
+	if alwaysDeliver {
+		runes := []rune(result)
+		if len(runes) > maxConfirmationChars {
+			result = string(runes[:maxConfirmationChars]) + "…"
+			runes = []rune(result)
+		}
+		*used += len(runes)
+		return result
+	}
 	remaining := maxToolResultChars - *used
 	if remaining <= 0 {
 		return "[Résultat non transmis : le budget de contexte des outils est épuisé pour cette conversation. Termine avec ce que tu as déjà lu, ou demande à l'enseignant de relancer la demande découpée en étapes.]"
@@ -1072,6 +1172,10 @@ type turnResult struct {
 	sawDone      bool             // the stream ended with data: [DONE]
 	stopped      bool             // chunk.error surfaced: the job must stop, error already emitted
 	finishReason string           // last non-empty finish_reason: "tool_calls", "stop", "length"…
+	// droppedCalls counts the calls discarded by the finish_reason cross-check.
+	// The caller needs it for the per-job diagnostic: a dropped call still means
+	// the gateway forwarded `tools` and the model answered with one.
+	droppedCalls int
 }
 
 // streamTurn consumes one SSE stream. It forwards deltas and hermes.tool.progress
@@ -1224,6 +1328,13 @@ func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode, deskMode strin
 		if res.finishReason != "" && res.finishReason != "tool_calls" && !json.Valid([]byte(acc.args.String())) {
 			log.Printf("hermes: dropping incomplete tool call %q (finish_reason=%s, args=%q)",
 				acc.name, res.finishReason, truncateStr(acc.args.String(), 120))
+			res.droppedCalls++
+			// Say it in the thread too. Dropped silently, the teacher got a done
+			// event with an empty reply (the cut turn often carries no text at all)
+			// and no explanation of why their request produced nothing.
+			job.append(StreamEvent{Type: "tool", Tool: toolEventPayload(acc.name, "", "error",
+				fmt.Sprintf("appel interrompu par le modèle (finish_reason=%s) : rien n'a été exécuté, relance ta demande", res.finishReason),
+				false)})
 			continue
 		}
 		if acc.id == "" {

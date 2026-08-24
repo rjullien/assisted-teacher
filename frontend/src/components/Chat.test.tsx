@@ -16,7 +16,7 @@ describe('Chat', () => {
   })
 
   // Helper: render Chat and wait for WebSocket to connect
-  async function renderConnected(props?: { currentFile?: string | null; fileContent?: string; agent?: 'lya' | 'pi'; userName?: string; session?: ChatSession; onSessionChange?: (s: ChatSession) => void; onFileChanged?: (path: string) => void }) {
+  async function renderConnected(props?: { currentFile?: string | null; fileContent?: string; agent?: 'lya' | 'pi'; userName?: string; session?: ChatSession; onSessionChange?: (s: ChatSession) => void; onFileChanged?: (path: string) => void | boolean | Promise<void | boolean> }) {
     const result = renderWithI18n(
       <Chat {...defaultProps} {...props} currentFile={props?.currentFile ?? null} />
     )
@@ -601,5 +601,189 @@ describe('Chat', () => {
     expect(screen.queryByText('Copie / insertion')).not.toBeInTheDocument()
     expect(screen.queryByText('Mise à jour directe')).not.toBeInTheDocument()
     expect(document.querySelector('.chat-workfile')).toBeNull()
+  })
+
+  // --- WebSocket lifetime ---------------------------------------------------
+  //
+  // The socket must survive the props changing. App re-creates onFileChanged
+  // whenever the editor buffer changes, and Milkdown reports every keystroke:
+  // when that identity reached the socket effect, each character closed /ws/acp
+  // and opened a new one, stalling a running generation and disabling Send while
+  // the new socket handshook.
+
+  it('does not rebuild the WebSocket when the editor content changes', async () => {
+    const ws = trackWebSockets()
+    const staleCallback = vi.fn()
+    const { rerender } = await renderConnected({
+      currentFile: 'B1/unit5.md',
+      fileContent: 'a',
+      onFileChanged: staleCallback,
+    })
+    expect(ws.instances.length).toBe(1)
+
+    // What App does on every keystroke: new fileContent AND a new callback identity.
+    const freshCallback = vi.fn()
+    for (const typed of ['ab', 'abc', 'abcd']) {
+      rerender(
+        <Chat
+          {...defaultProps}
+          currentFile="B1/unit5.md"
+          fileContent={typed}
+          onFileChanged={freshCallback}
+        />
+      )
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 5))
+      })
+    }
+
+    expect(ws.instances.length).toBe(1)
+
+    // Still the live socket, and it routes to the LATEST callback: a ref that is
+    // never refreshed would be just as broken as a recycled socket.
+    await act(async () => {
+      ws.instances[0].onmessage?.(
+        new MessageEvent('message', {
+          data: JSON.stringify({ seq: 1, type: 'tool', tool: { name: 'file_changed', path: 'B1/unit5.md' } }),
+        })
+      )
+    })
+    expect(freshCallback).toHaveBeenCalledWith('B1/unit5.md')
+    expect(staleCallback).not.toHaveBeenCalled()
+
+    ws.restore()
+  })
+
+  // --- Tool events still running -------------------------------------------
+  //
+  // Both bridges announce a call before executing it. Rendered like a terminal
+  // event, that announcement duplicated every operation in the thread and, on a
+  // refusal, claimed the write had landed just before saying it failed.
+
+  it('shows a write as in progress, and in the thread only once it is over', async () => {
+    const ws = trackWebSockets()
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya' })
+
+    const lastWs = ws.instances[ws.instances.length - 1]
+    await act(async () => {
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 1, type: 'tool', tool: { name: 'write_file', path: 'B1/unit5.md', status: 'running' } }) }))
+    })
+
+    // Nothing has been written yet: no audit line, only the transient status.
+    expect(document.querySelectorAll('.chat-message.tool').length).toBe(0)
+    expect(document.querySelector('.chat-tool-status')?.textContent).toBe(
+      '✏️ Écriture de B1/unit5.md en cours…'
+    )
+
+    await act(async () => {
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 2, type: 'tool', tool: { name: 'write_file', path: 'B1/unit5.md', status: 'done' } }) }))
+    })
+
+    const toolMessages = document.querySelectorAll('.chat-message.tool')
+    expect(toolMessages.length).toBe(1)
+    expect(toolMessages[0].textContent).toBe('✏️ Écriture de B1/unit5.md')
+    expect(document.querySelector('.chat-tool-status')).toBeNull()
+
+    ws.restore()
+  })
+
+  it('never shows a refused write as a completed one, not even for an instant', async () => {
+    const ws = trackWebSockets()
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya' })
+
+    const lastWs = ws.instances[ws.instances.length - 1]
+    await act(async () => {
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 1, type: 'tool', tool: { name: 'patch_file', path: 'B1/unit5.md', status: 'running' } }) }))
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 2, type: 'tool', tool: { name: 'patch_file', path: 'B1/unit5.md', status: 'error', error: 'old_string introuvable' } }) }))
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 3, type: 'done', reply: 'Je réessaie.' }) }))
+    })
+
+    const toolMessages = document.querySelectorAll('.chat-message.tool')
+    expect(toolMessages.length).toBe(1)
+    expect(toolMessages[0].textContent).toContain('Échec sur B1/unit5.md')
+    expect(document.querySelector('.chat-messages')?.textContent).not.toContain(
+      '✏️ Écriture de B1/unit5.md'
+    )
+
+    ws.restore()
+  })
+
+  // --- Empty working file ---------------------------------------------------
+
+  it('announces the file tools in the direct sub-mode even when the file is empty', async () => {
+    const ws = trackWebSockets()
+    // A file just created from the tree: nothing to inline, and the most direct
+    // reading of "complète ce fichier".
+    await renderConnected({ currentFile: 'B1/vide.md', fileContent: '', agent: 'lya' })
+
+    fireEvent.click(screen.getByText('Mise à jour directe'))
+    await waitFor(() => {
+      expect(screen.getByText('Mise à jour directe')).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    const payload = await sendPrompt(ws.instances, 'Complète ce fichier')
+
+    expect(payload.deskMode).toBe('direct')
+    expect(payload.content).toContain('write_file')
+    expect(payload.content).toContain('encore vide')
+    expect(payload.content).not.toContain("tu n'as pas accès à mon dossier de travail")
+
+    ws.restore()
+  })
+
+  it('keeps the bare path wording on an empty file in copie/insertion', async () => {
+    const ws = trackWebSockets()
+    await renderConnected({ currentFile: 'B1/vide.md', fileContent: '', agent: 'lya' })
+
+    const payload = await sendPrompt(ws.instances, 'Propose un plan')
+
+    // No tool is declared in this sub-mode, so nothing must be announced.
+    expect(payload.content).toContain('[Contexte: je travaille sur le fichier "B1/vide.md"]')
+    expect(payload.content).not.toContain('write_file')
+
+    ws.restore()
+  })
+
+  // --- Editor buffer kept because it was dirty ------------------------------
+
+  it('warns when the editor kept unsaved edits instead of showing the new file', async () => {
+    const ws = trackWebSockets()
+    // App returns false: the open file changed on disk but the buffer was dirty,
+    // so the editor still shows the teacher's text and the next auto-save will
+    // overwrite what Lya wrote.
+    const onFileChanged = vi.fn().mockResolvedValue(false)
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya', onFileChanged })
+
+    const lastWs = ws.instances[ws.instances.length - 1]
+    await act(async () => {
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 1, type: 'tool', tool: { name: 'file_changed', path: 'B1/unit5.md' } }) }))
+    })
+
+    await waitFor(() => {
+      expect(document.querySelector('.chat-messages')?.textContent).toContain(
+        'tes modifications non enregistrées ont été gardées'
+      )
+    })
+
+    ws.restore()
+  })
+
+  it('says nothing when the editor did reload the file', async () => {
+    const ws = trackWebSockets()
+    const onFileChanged = vi.fn().mockResolvedValue(true)
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya', onFileChanged })
+
+    const lastWs = ws.instances[ws.instances.length - 1]
+    await act(async () => {
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 1, type: 'tool', tool: { name: 'file_changed', path: 'B1/unit5.md' } }) }))
+      await new Promise((r) => setTimeout(r, 5))
+    })
+
+    expect(document.querySelector('.chat-messages')?.textContent).not.toContain(
+      'modifications non enregistrées'
+    )
+    expect(document.querySelectorAll('.chat-message.tool').length).toBe(0)
+
+    ws.restore()
   })
 })

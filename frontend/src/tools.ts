@@ -110,6 +110,19 @@ export function isFileOp(tool: NormalizedTool): boolean {
   return tool.path !== '' || tool.status === 'error'
 }
 
+/**
+ * True while the tool is still running, i.e. before its terminal event.
+ *
+ * Both bridges announce a call before executing it (`status: 'running'` in
+ * bridge/hermes.go and bridge/pi.go). Treating that event like a finished one is
+ * what showed "✏️ Écriture de X" for a write that had not happened yet — twice
+ * for a successful write, and immediately before the error line for a refused
+ * one.
+ */
+export function isToolRunning(tool: NormalizedTool): boolean {
+  return tool.status === 'running' || tool.status === 'started'
+}
+
 type Translate = (key: string, params?: Record<string, string | number>) => string
 
 /**
@@ -126,9 +139,15 @@ export function toolLabel(tool: NormalizedTool, t: Translate): string {
       ? t('piChat.toolFailed', { path: tool.path, error: reason })
       : t('piChat.toolFailedNoPath', { name: tool.name || '?', error: reason })
   }
-  if (tool.path && READ_TOOL_NAMES.has(tool.name)) return t('piChat.toolRead', { path: tool.path })
+  if (tool.path && READ_TOOL_NAMES.has(tool.name)) {
+    return isToolRunning(tool)
+      ? t('piChat.toolReading', { path: tool.path })
+      : t('piChat.toolRead', { path: tool.path })
+  }
   if (tool.path && WRITE_TOOL_NAMES.has(tool.name)) {
-    return t('piChat.toolWrite', { path: tool.path })
+    return isToolRunning(tool)
+      ? t('piChat.toolWriting', { path: tool.path })
+      : t('piChat.toolWrite', { path: tool.path })
   }
   if (tool.name) return t('piChat.toolOther', { name: tool.name })
   return t('piChat.toolUnknown')
