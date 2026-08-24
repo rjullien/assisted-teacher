@@ -275,7 +275,13 @@ func (b *HermesBridge) startJob(content, systemPrompt, mode string) *Job {
 		status := "done"
 		if job.status == JobRunning {
 			if err != nil {
-				job.append(StreamEvent{Type: "error", Error: "Échec IA. Réessaie.", Detail: err.Error()})
+				// An auth failure is not a transient glitch: telling the teacher
+				// to retry would be a lie, and it hides an operator problem.
+				userMsg := "Échec IA. Réessaie."
+				if strings.Contains(err.Error(), "hermes auth failed") {
+					userMsg = "Clé API Hermes invalide (HERMES_API_KEY ≠ API_SERVER_KEY de Lya)."
+				}
+				job.append(StreamEvent{Type: "error", Error: userMsg, Detail: err.Error()})
 				status = "error"
 			} else {
 				// Should not happen — done is emitted inside callHermesStream
@@ -324,13 +330,25 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		bodySnippet := truncateStr(string(raw), 200)
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			// Surface the fingerprint so the sent key can be compared with the
-			// one hermes holds, without ever logging the secret itself.
+			// Hermes rejected the Bearer key — this is NOT Authelia, and not the
+			// teacher's session. Typical body: "Invalid gateway API key".
+			//
+			// Log the key fingerprint so the key actually sent can be compared
+			// with the one Hermes holds, without ever logging the secret:
+			//   kubectl exec -n openclaw deploy/hermes-lya -- \
+			//     sh -c 'grep API_SERVER_KEY /opt/data/.env | cut -d= -f2 | tr -d "\n" | sha256sum'
+			//
+			// Beware: Hermes validates API_SERVER_KEY from the PVC file
+			// /opt/data/.env, NOT from the K8s/Infisical env of the pod. The two
+			// diverge after an Infisical rotation, so matching secrets in
+			// Kubernetes are not proof of a matching key. See README.
 			log.Printf("hermes: auth rejected (HTTP %d) with keyLen=%d keyFp=%s url=%s",
 				resp.StatusCode, len(b.apiKey), keyFingerprint(b.apiKey), b.hermesURL)
+			return fmt.Errorf("hermes auth failed (HTTP %d): %s — vérifie HERMES_API_KEY (= API_SERVER_KEY de Lya, y compris dans /opt/data/.env du PVC)", resp.StatusCode, bodySnippet)
 		}
-		return fmt.Errorf("hermes HTTP %d: %s", resp.StatusCode, truncateStr(string(raw), 200))
+		return fmt.Errorf("hermes HTTP %d: %s", resp.StatusCode, bodySnippet)
 	}
 
 	// Consume SSE stream
