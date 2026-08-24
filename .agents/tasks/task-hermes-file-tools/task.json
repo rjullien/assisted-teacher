@@ -7,5 +7,15 @@
     "FEAT-002",
     "FEAT-003"
   ],
-  "blocked_reason": null
+  "blocked_reason": null,
+  "user_steering": [
+    {
+      "received_during": "FEAT-001",
+      "verbatim_fr": "En fait en mode desk ia il faut deux mode. Un mode actuel avec copie et insertion et un mode update direct du fichier dans ce mode tu affiches le fichier de travail en haut du mode desk",
+      "interpretation": "Mode Desk must expose two selectable sub-modes: (a) the current behaviour where Lya answers in the chat and the teacher copies/inserts the result manually, and (b) a 'mise a jour directe' sub-mode where Lya writes the working file itself via the new backend file tools. In sub-mode (b) the Desk panel must display the current working file (its path) at the top of the panel so the teacher always sees which file will be modified.",
+      "impact": "Not covered by FEAT-002 (backend multi-turn tool loop) nor FEAT-003 (tool event labels). Needs a new frontend feature: a sub-mode toggle in Chat.tsx sent to the backend alongside mode:\"desk\", a working-file header in the Desk panel, fr/en i18n strings, and gating of the direct-write path on that sub-mode. The backend write interception (handleToolFileWrite, gated on mode==\"desk\") likely needs to honour the sub-mode flag too so the copy/insert mode never mutates files.",
+      "status": "not_implemented_here",
+      "note": "Recorded by the FEAT-001 sub-agent, which is scoped to baseline verification only and made no source changes. The planner should add this as a new feature (e.g. FEAT-004) or amend FEAT-003 before implementation."
+    }
+  ]
 }
