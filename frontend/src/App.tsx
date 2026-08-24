@@ -62,7 +62,7 @@ const MODE_STORAGE_KEY = 'assisted-teacher-mode'
 
 function loadMode(): AppMode {
   const saved = localStorage.getItem(MODE_STORAGE_KEY)
-  if (saved === 'desk' || saved === 'lya') return saved
+  if (saved === 'desk' || saved === 'pi' || saved === 'lya') return saved
   return 'desk'
 }
 
@@ -85,7 +85,13 @@ export default function App() {
   const [programmeError, setProgrammeError] = useState(false)
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false)
   const [userName, setUserName] = useState<string>('')
+  const [piAvailable, setPiAvailable] = useState(false)
   const flushRef = useRef<(() => Promise<void>) | null>(null)
+
+  // Derived: is the workspace layout visible?
+  const isWorkspace = mode === 'desk' || mode === 'pi'
+  // Derived: which agent backend does the chat panel connect to?
+  const chatAgent: 'lya' | 'pi' = mode === 'pi' ? 'pi' : 'lya'
 
   // i18n context value
   const handleSetLocale = useCallback((l: Locale) => {
@@ -116,6 +122,25 @@ export default function App() {
     }
     fetchUser()
   }, [])
+
+  // Fetch available agents — hide pi button if not configured
+  useEffect(() => {
+    async function fetchAgents() {
+      try {
+        const res = await getJSON<Array<{ id: string }>>('/api/agents')
+        if (res.ok && res.data) {
+          const hasPi = res.data.some((a) => a.id === 'pi')
+          setPiAvailable(hasPi)
+          // If pi is not available but mode is 'pi', fall back to desk
+          if (!hasPi && mode === 'pi') {
+            setModeState('desk')
+            saveMode('desk')
+          }
+        }
+      } catch { /* ignore — pi button stays hidden */ }
+    }
+    fetchAgents()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch programme data when niveau or locale changes
   const fetchProgramme = useCallback(async (niv: string, lang: string) => {
@@ -199,6 +224,19 @@ export default function App() {
 
   const handleFileTreeRefresh = () => setRefreshKey((k) => k + 1)
 
+  // Called by Chat when pi writes a file — reload it in the editor
+  const handleFileChanged = useCallback(async (path: string) => {
+    if (path === currentFile) {
+      const res = await getText(`/api/file?path=${encodeURIComponent(path)}`)
+      if (res.ok && res.data !== null) {
+        setFileContent(res.data)
+        setLastSavedContent(res.data)
+      }
+    }
+    // Refresh file tree in case a new file was created
+    setRefreshKey((k) => k + 1)
+  }, [currentFile])
+
   if (isMobile) {
     return (
       <I18nContext.Provider value={i18nValue}>
@@ -207,12 +245,13 @@ export default function App() {
             currentFile={currentFile}
             niveau={niveau}
             mode={mode}
+            piAvailable={piAvailable}
             onNiveauChange={handleNiveauChange}
             onModeChange={handleModeChange}
             onExportPDF={() => handleExport('pdf')}
             onExportDOCX={() => handleExport('docx')}
           />
-          {mode === 'desk' ? (
+          {isWorkspace ? (
             <MobileLayout
               currentFile={currentFile}
               fileContent={fileContent}
@@ -227,6 +266,8 @@ export default function App() {
               onSave={handleSave}
               onFlushRef={flushRef}
               onInsertFromChat={handleInsertFromChat}
+              agent={chatAgent}
+              onFileChanged={handleFileChanged}
             />
           ) : (
             <LyaChat userName={userName} />
@@ -243,13 +284,14 @@ export default function App() {
           currentFile={currentFile}
           niveau={niveau}
           mode={mode}
+          piAvailable={piAvailable}
           onNiveauChange={handleNiveauChange}
           onModeChange={handleModeChange}
           onExportPDF={() => handleExport('pdf')}
           onExportDOCX={() => handleExport('docx')}
           onToggleProgramme={() => setProgrammeDrawerOpen((o) => !o)}
         />
-        {mode === 'desk' ? (
+        {isWorkspace ? (
           <div className="workspace">
             <Allotment>
               <Allotment.Pane preferredSize={220} minSize={160} maxSize={400}>
@@ -274,6 +316,8 @@ export default function App() {
                   currentFile={currentFile}
                   onInsert={handleInsertFromChat}
                   programme={programme}
+                  agent={chatAgent}
+                  onFileChanged={handleFileChanged}
                 />
               </Allotment.Pane>
             </Allotment>

@@ -5,19 +5,27 @@ import { useI18n } from '../i18n'
 
 interface ChatMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'tool'
   content: string
   isStreaming?: boolean
+  piWroteFiles?: boolean
+}
+
+interface ToolEvent {
+  name: string
+  status?: string
+  path?: string
 }
 
 interface StreamEvent {
   seq: number
-  type: string // delta | done | error | meta
+  type: string // delta | tool | done | error | meta
   text?: string
   reply?: string
   error?: string
   detail?: string
   jobId?: string
+  tool?: ToolEvent
 }
 
 interface ProgrammeData {
@@ -50,6 +58,8 @@ interface ChatProps {
   currentFile: string | null
   onInsert: (text: string) => void
   programme: ProgrammeData | null
+  agent?: 'lya' | 'pi'
+  onFileChanged?: (path: string) => void
 }
 
 // --- System prompt builder ---
@@ -111,7 +121,7 @@ CONSIGNES :
 - Si on te demande de vérifier la conformité d'un cours, analyse-le au regard du programme (axe, niveau, grammaire, vocabulaire).`
 }
 
-export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
+export default function Chat({ currentFile, onInsert, programme, agent = 'lya', onFileChanged }: ChatProps) {
   const { t } = useI18n()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -122,6 +132,9 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
   const currentJobId = useRef<string | null>(null)
   const wsRef = useRef<AuthWebSocket | null>(null)
 
+  // Track if current job wrote files (for pi)
+  const jobWroteFiles = useRef(false)
+
   // Memoize system prompt so it only changes when programme changes
   const systemPrompt = useMemo(() => buildSystemPrompt(programme), [programme])
 
@@ -129,6 +142,36 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
     switch (ev.type) {
       case 'meta':
         currentJobId.current = ev.jobId || null
+        jobWroteFiles.current = false
+        break
+
+      case 'tool':
+        if (ev.tool) {
+          const { name, path, status } = ev.tool
+          // file_changed is a synthetic event from pi bridge
+          if (name === 'file_changed' && path && onFileChanged) {
+            onFileChanged(path)
+          }
+          // Track writes
+          if ((name === 'write' || name === 'edit') && status === 'done') {
+            jobWroteFiles.current = true
+          }
+          // Show tool progress as a message
+          if (name !== 'file_changed') {
+            let toolText = ''
+            if (name === 'read' && path) {
+              toolText = t('piChat.toolRead', { path })
+            } else if ((name === 'write' || name === 'edit') && path) {
+              toolText = t('piChat.toolWrite', { path })
+            } else {
+              toolText = t('piChat.toolOther', { name })
+            }
+            setMessages((prev) => [
+              ...prev,
+              { id: `tool-${Date.now()}-${Math.random()}`, role: 'tool', content: toolText },
+            ])
+          }
+        }
         break
 
       case 'delta':
@@ -157,6 +200,7 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
       case 'done':
         setMessages((prev) => {
           const last = prev[prev.length - 1]
+          const wroteFiles = jobWroteFiles.current
           if (last && last.role === 'assistant' && last.isStreaming) {
             return [
               ...prev.slice(0, -1),
@@ -164,6 +208,7 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
                 ...last,
                 content: ev.reply || last.content,
                 isStreaming: false,
+                piWroteFiles: wroteFiles || undefined,
               },
             ]
           }
@@ -175,6 +220,7 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
                 role: 'assistant',
                 content: ev.reply,
                 isStreaming: false,
+                piWroteFiles: wroteFiles || undefined,
               },
             ]
           }
@@ -229,12 +275,13 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
         currentJobId.current = null
         break
     }
-  }, [])
+  }, [onFileChanged, t])
 
   // Connect to backend WebSocket with auth-aware reconnect
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/ws/acp`
+    const wsPath = agent === 'pi' ? '/ws/agent/pi' : '/ws/acp'
+    const wsUrl = `${protocol}//${window.location.host}${wsPath}`
 
     const authWs = new AuthWebSocket({
       url: wsUrl,
@@ -291,7 +338,7 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
     return () => {
       authWs.close()
     }
-  }, [handleStreamEvent]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [handleStreamEvent, agent]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -318,6 +365,8 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
       type: 'prompt',
       content,
       system: systemPrompt,
+      mode: agent === 'pi' ? 'pi' : 'desk',
+      currentFile: currentFile || undefined,
     })
     setInput('')
   }
@@ -333,6 +382,9 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
     <div className="chat-panel">
       <div className="chat-header">
         {t('chat.title')}
+        {agent === 'pi' && (
+          <span className="chat-pi-badge">{t('piChat.hint')}</span>
+        )}
         {programme && (
           <span className="chat-niveau-badge">
             {programme.niveau} — {programme.cecrl.LVA}
@@ -363,12 +415,20 @@ export default function Chat({ currentFile, onInsert, programme }: ChatProps) {
         )}
         {messages.map((msg) => (
           <div key={msg.id} className={`chat-message ${msg.role}`}>
-            <ReactMarkdown>{msg.content}</ReactMarkdown>
+            {msg.role === 'tool' ? (
+              <span className="chat-tool-event">{msg.content}</span>
+            ) : (
+              <ReactMarkdown>{msg.content}</ReactMarkdown>
+            )}
             {msg.role === 'assistant' && !msg.isStreaming && (
               <div className="actions">
-                <button onClick={() => onInsert(msg.content)}>
-                  {t('chat.insert')}
-                </button>
+                {msg.piWroteFiles ? (
+                  <span className="chat-pi-updated">{t('piChat.updated')}</span>
+                ) : (
+                  <button onClick={() => onInsert(msg.content)}>
+                    {t('chat.insert')}
+                  </button>
+                )}
                 <button onClick={() => navigator.clipboard.writeText(msg.content)}>
                   {t('chat.copy')}
                 </button>

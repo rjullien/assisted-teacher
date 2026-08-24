@@ -222,6 +222,7 @@ func (b *HermesBridge) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			Type    string `json:"type"`
 			Content string `json:"content,omitempty"`
 			System  string `json:"system,omitempty"`
+			Mode    string `json:"mode,omitempty"`
 			JobID   string `json:"jobId,omitempty"`
 			After   int    `json:"after,omitempty"`
 		}
@@ -233,7 +234,7 @@ func (b *HermesBridge) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		switch msg.Type {
 		case "prompt":
 			// Start a new job and immediately subscribe
-			job := b.startJob(msg.Content, msg.System)
+			job := b.startJob(msg.Content, msg.System, msg.Mode)
 			sendWSJSON(conn, StreamEvent{Type: "meta", JobID: job.ID})
 			b.streamToWS(conn, job, 0)
 		case "subscribe":
@@ -251,7 +252,7 @@ func (b *HermesBridge) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 // startJob creates a background job that calls Hermes streaming.
-func (b *HermesBridge) startJob(content, systemPrompt string) *Job {
+func (b *HermesBridge) startJob(content, systemPrompt, mode string) *Job {
 	b.hub.gc()
 	ctx, cancel := context.WithTimeout(context.Background(), jobRunTimeout)
 	job := &Job{
@@ -268,15 +269,28 @@ func (b *HermesBridge) startJob(content, systemPrompt string) *Job {
 	go func() {
 		defer cancel()
 		defer close(job.doneCh)
+		start := time.Now()
 		err := b.callHermesStream(ctx, job, content, systemPrompt)
+		durationMs := time.Since(start).Milliseconds()
+		status := "done"
 		if job.status == JobRunning {
 			if err != nil {
 				job.append(StreamEvent{Type: "error", Error: "Échec IA. Réessaie.", Detail: err.Error()})
+				status = "error"
 			} else {
 				// Should not happen — done is emitted inside callHermesStream
 				job.append(StreamEvent{Type: "done"})
 			}
 		}
+		if job.status == JobError {
+			status = "error"
+		}
+		// agent_usage log line
+		if mode == "" {
+			mode = "desk"
+		}
+		log.Printf("agent_usage agent=lya mode=%s jobId=%s promptLen=%d durationMs=%d status=%s",
+			mode, job.ID, len(content), durationMs, status)
 	}()
 	return job
 }
