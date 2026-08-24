@@ -1,0 +1,27 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Add workspace file-write capability to HermesBridge in mode Desk, so that when Hermes reports a write_file/edit_file/create_file tool via hermes.tool.progress SSE events, the backend writes the file to the local workspace and emits a file_changed event - matching the behavior of PiBridge.",
+  "status": "in_progress",
+  "steps": [
+    "1. Modify NewHermesBridge in backend/internal/bridge/hermes.go to accept a workDir parameter (string). Update the struct to store it.",
+    "2. Add a safePath helper method on HermesBridge (reuse the same logic from backend/internal/api/files.go: filepath.Clean, reject '..' and absolute paths, ensure result stays under workDir).",
+    "3. In callHermesStream, in the 'hermes.tool.progress' handling block: after json.Unmarshal of the tool payload, normalize the tool name and path (check keys: name/tool/toolName, path/file/args.path/args.file - same logic as frontend/src/tools.ts). If the tool name matches a file write pattern (write, write_file, create_file, edit, edit_file) AND status is 'done' AND there is content in the payload (check keys: content, output, result, args.content), then: validate path with safePath, create parent dirs with os.MkdirAll, write file with os.WriteFile, and emit a file_changed StreamEvent: {Type: 'tool', Tool: map[string]interface{}{\"name\": \"file_changed\", \"path\": <relative path>}}.",
+    "4. If workDir is empty string (not configured), skip file writing silently (just forward the tool event as before). This preserves backward compatibility and ensures mode Lya (which shares the same bridge but should not write files) is unaffected since mode Lya uses LyaChat.tsx which connects to /ws/acp but never sends desk-mode prompts with file context.",
+    "5. Update backend/main.go: pass *workDir as the second argument to NewHermesBridge (change the call from NewHermesBridge(*hermesURL, *hermesKey) to NewHermesBridge(*hermesURL, *hermesKey, *workDir)).",
+    "6. Add a test in backend/internal/bridge/hermes_test.go: TestHermesBridge_FileWrite. Create a mock Hermes server that emits a hermes.tool.progress SSE event with name='write_file', path='test/output.md', content='# Hello', status='done', then emits [DONE]. Create a temp dir as workDir, construct a HermesBridge with that workDir, send a prompt via WS, collect events. Assert: (a) a tool event with name=file_changed and path=test/output.md is received, (b) the file actually exists at tempDir/test/output.md with the expected content.",
+    "7. Add a test TestHermesBridge_FileWrite_PathTraversal: mock server emits tool progress with path='../../etc/passwd'. Assert the file is NOT written (safePath rejects it) and no file_changed event is emitted, but no error event is emitted either (graceful skip)."
+  ],
+  "acceptance_criteria": [
+    "Running `go test ./... -v` in backend/ passes all tests including the new TestHermesBridge_FileWrite and TestHermesBridge_FileWrite_PathTraversal",
+    "The existing TestHermesBridge_PromptAndStream, TestHermesBridge_Reconnect, TestHermesBridge_BadKey still pass unchanged",
+    "When workDir is empty string, HermesBridge behaves exactly as before (no file writes, just forwards tool events)",
+    "Mode Lya is not affected: LyaChat.tsx is not modified, and the bridge skips file writes for tool events that lack content or path"
+  ],
+  "verification": [
+    "cd /projects/sandbox/assisted-teacher/backend && go build ./...",
+    "cd /projects/sandbox/assisted-teacher/backend && go test ./... -v"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

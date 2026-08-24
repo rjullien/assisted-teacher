@@ -79,7 +79,7 @@ func main() {
 	// Hermes bridge (connects to Lya via HTTP Runs API — reconnectable, no timeout issues)
 	hermesEnabled := *hermesKey != ""
 	if hermesEnabled {
-		hermesBridge := bridge.NewHermesBridge(*hermesURL, *hermesKey)
+		hermesBridge := bridge.NewHermesBridge(*hermesURL, *hermesKey, *workDir)
 		mux.HandleFunc("/ws/acp", hermesBridge.HandleWebSocket)
 		log.Printf("Hermes bridge: %s", *hermesURL)
 	} else {

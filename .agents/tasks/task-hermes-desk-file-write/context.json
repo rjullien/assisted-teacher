@@ -1,0 +1,24 @@
+{
+  "project_type": "Go backend + React/Vite/TypeScript frontend, assisted teaching app",
+  "language": "Go (backend), TypeScript (frontend)",
+  "build_system": "go build for backend, npm for frontend, docker-compose for integration",
+  "test_framework": "go test with httptest mock servers (backend), vitest (frontend)",
+  "build_command": "cd backend && go build ./...",
+  "test_command": "cd backend && go test ./... -v",
+  "verification_instructions": "1. Run go test ./... in backend/ 2. Verify no compilation errors 3. Check that hermes_test.go covers file write scenario",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "export PATH=\"$HOME/.nvm/versions/node/v18.20.8/bin:$PATH\" for node; Go 1.25.1 already available",
+  "environment_constraints": "OPEN_INTERNET - full network access available",
+  "contribution_requirements": "Feature branches, PR workflow, conventional commits (feat:, fix:), do NOT merge or release",
+  "key_patterns": "HermesBridge receives hermesURL+apiKey, PiBridge receives workDir. Pi emits file_changed events after agent_end. safePath in files.go validates paths. tools.ts normalizes tool payloads with name/path/status. Frontend Chat.tsx already handles file_changed events from tool type StreamEvents.",
+  "relevant_files": [
+    "backend/internal/bridge/hermes.go",
+    "backend/internal/bridge/hermes_test.go",
+    "backend/internal/bridge/pi.go",
+    "backend/internal/api/files.go",
+    "backend/main.go",
+    "frontend/src/tools.ts",
+    "frontend/src/components/Chat.tsx"
+  ],
+  "directory_structure": "backend/ - Go backend (main.go at root, internal/bridge/ for WS bridges, internal/api/ for REST handlers); frontend/src/ - React app (components/, hooks/, i18n/); workspace/ - course files"
+}

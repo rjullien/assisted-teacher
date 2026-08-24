@@ -22,6 +22,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -166,27 +168,162 @@ func (h *Hub) gc() {
 type HermesBridge struct {
 	hermesURL string
 	apiKey    string
+	workDir   string
 	hub       *Hub
 	upgrader  websocket.Upgrader
 }
 
-func NewHermesBridge(hermesURL, apiKey string) *HermesBridge {
+func NewHermesBridge(hermesURL, apiKey, workDir string) *HermesBridge {
 	// TrimSpace is critical: Infisical/K8s secrets often carry a trailing \n,
 	// which makes the Bearer token mismatch on the gateway side.
 	key := strings.TrimSpace(apiKey)
 	if key != apiKey {
 		log.Printf("hermes: API key had %d surrounding whitespace byte(s) — trimmed", len(apiKey)-len(key))
 	}
-	log.Printf("hermes: bridge configured (url=%s, keyLen=%d, keyFp=%s)",
-		hermesURL, len(key), keyFingerprint(key))
+	log.Printf("hermes: bridge configured (url=%s, keyLen=%d, keyFp=%s, workDir=%s)",
+		hermesURL, len(key), keyFingerprint(key), workDir)
 	return &HermesBridge{
 		hermesURL: strings.TrimRight(strings.TrimSpace(hermesURL), "/"),
 		apiKey:    key,
+		workDir:   workDir,
 		hub:       NewHub(),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 	}
+}
+
+// safePath validates and resolves a relative path within the workspace.
+// Returns ("", error) if the path escapes the workspace.
+func (b *HermesBridge) safePath(relPath string) (string, error) {
+	cleaned := filepath.Clean(relPath)
+	if strings.HasPrefix(cleaned, "..") || filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("invalid path: %s", relPath)
+	}
+	abs := filepath.Join(b.workDir, cleaned)
+	if !strings.HasPrefix(abs, filepath.Clean(b.workDir)) {
+		return "", fmt.Errorf("path escapes workspace: %s", relPath)
+	}
+	return abs, nil
+}
+
+// writeToolNames lists tool names that represent a file-write operation.
+var writeToolNames = map[string]bool{
+	"write":       true,
+	"write_file":  true,
+	"create_file": true,
+	"edit":        true,
+	"edit_file":   true,
+}
+
+// handleToolFileWrite inspects a tool-progress payload and, if it represents a
+// completed file-write operation, writes the file to disk and returns the
+// relative path. Returns "" if the event should not trigger a file write.
+func (b *HermesBridge) handleToolFileWrite(payload map[string]interface{}) string {
+	if b.workDir == "" {
+		return ""
+	}
+
+	// Normalize tool name (same keys as frontend/src/tools.ts)
+	name := strFromMap(payload, "name")
+	if name == "" {
+		name = strFromMap(payload, "tool")
+	}
+	if name == "" {
+		name = strFromMap(payload, "toolName")
+	}
+	if name == "" {
+		name = strFromMap(payload, "label")
+	}
+
+	if !writeToolNames[name] {
+		return ""
+	}
+
+	// Check status is "done"
+	status := strFromMap(payload, "status")
+	if status == "" {
+		status = strFromMap(payload, "state")
+	}
+	if status != "done" {
+		return ""
+	}
+
+	// Normalize path
+	path := strFromMap(payload, "path")
+	if path == "" {
+		path = strFromMap(payload, "file")
+	}
+	if path == "" {
+		path = strFromArgs(payload, "path")
+	}
+	if path == "" {
+		path = strFromArgs(payload, "file")
+	}
+	if path == "" {
+		return ""
+	}
+
+	// Normalize content
+	content := strFromMap(payload, "content")
+	if content == "" {
+		content = strFromMap(payload, "output")
+	}
+	if content == "" {
+		content = strFromMap(payload, "result")
+	}
+	if content == "" {
+		content = strFromArgs(payload, "content")
+	}
+	if content == "" {
+		return ""
+	}
+
+	// Validate path
+	absPath, err := b.safePath(path)
+	if err != nil {
+		log.Printf("hermes: file write skipped (unsafe path %q): %v", path, err)
+		return ""
+	}
+
+	// Create parent directories and write file
+	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+		log.Printf("hermes: cannot create parent dir for %q: %v", path, err)
+		return ""
+	}
+	if err := os.WriteFile(absPath, []byte(content), 0644); err != nil {
+		log.Printf("hermes: cannot write file %q: %v", path, err)
+		return ""
+	}
+
+	log.Printf("hermes: wrote file %s (%d bytes)", path, len(content))
+	return path
+}
+
+// strFromMap extracts a string value from a map by key.
+func strFromMap(m map[string]interface{}, key string) string {
+	v, ok := m[key]
+	if !ok {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
+// strFromArgs extracts a string from the nested "args" map.
+func strFromArgs(m map[string]interface{}, key string) string {
+	args, ok := m["args"]
+	if !ok {
+		return ""
+	}
+	argsMap, ok := args.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	return strFromMap(argsMap, key)
 }
 
 // HandleWebSocket upgrades to WS and handles prompt/subscribe messages.
@@ -383,9 +520,23 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 
 		// Handle tool progress events from Hermes
 		if eventName == "hermes.tool.progress" {
-			var tool any
+			var tool interface{}
 			json.Unmarshal([]byte(data), &tool)
 			job.append(StreamEvent{Type: "tool", Tool: tool})
+
+			// If this is a file-write tool with status "done", write file to disk
+			// and emit a file_changed event (like PiBridge does).
+			if toolMap, ok := tool.(map[string]interface{}); ok {
+				if relPath := b.handleToolFileWrite(toolMap); relPath != "" {
+					job.append(StreamEvent{
+						Type: "tool",
+						Tool: map[string]interface{}{
+							"name": "file_changed",
+							"path": relPath,
+						},
+					})
+				}
+			}
 			continue
 		}
 
