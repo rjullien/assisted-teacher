@@ -26,6 +26,32 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Split the heavy, rarely-changing dependencies out of the app chunk.
+        // Without this the single bundle is ~780 kB and Vite warns on every
+        // build. Milkdown (WYSIWYG editor) and its ProseMirror core are by far
+        // the biggest, and they change only on dependency bumps — so caching
+        // them separately also means an app-code release does not invalidate
+        // them in the browser.
+        manualChunks: {
+          milkdown: [
+            '@milkdown/core',
+            '@milkdown/ctx',
+            '@milkdown/react',
+            '@milkdown/preset-commonmark',
+            '@milkdown/preset-gfm',
+            '@milkdown/plugin-history',
+            '@milkdown/plugin-listener',
+            '@milkdown/theme-nord',
+          ],
+          react: ['react', 'react-dom'],
+          markdown: ['react-markdown'],
+        },
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': 'http://localhost:9847',
