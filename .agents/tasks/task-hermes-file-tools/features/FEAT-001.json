@@ -1,0 +1,25 @@
+{
+  "id": "FEAT-001",
+  "type": "chore",
+  "description": "Confirm the build/test baseline is green on branch feat/hermes-file-tools before any code change, so later failures are unambiguously caused by this task. The branch already exists and is checked out; frontend/node_modules is already installed.",
+  "status": "completed",
+  "steps": [
+    "Confirm the working copy is on branch feat/hermes-file-tools (git branch --show-current). Do not create another branch, do not switch to main.",
+    "export PATH=\"$HOME/.nvm/versions/node/v18.20.8/bin:$PATH\" for every shell that runs frontend commands.",
+    "Run: cd backend && go build ./... && go vet ./... && gofmt -l . && go test ./... -count=1 -timeout=90s. Expect internal/api, internal/bridge, internal/export all ok and gofmt to print nothing.",
+    "Run: cd frontend && npx vitest --run (expect 8 files / 79 tests passing) then npm run build.",
+    "If frontend/node_modules is missing, run npm ci first.",
+    "Record the observed baseline numbers in the feature's findings field."
+  ],
+  "acceptance_criteria": [
+    "cd backend && go build ./... && go vet ./... && gofmt -l . && go test ./... -count=1 -timeout=90s succeeds with no gofmt output",
+    "cd frontend && npx vitest --run passes and npm run build succeeds",
+    "findings records the baseline test counts for both sides"
+  ],
+  "verification": [
+    "cd backend && go build ./... && go vet ./... && gofmt -l . && go test ./... -count=1 -timeout=90s",
+    "cd frontend && npx vitest --run && npm run build"
+  ],
+  "blocked_reason": null,
+  "findings": "Baseline GREEN on branch feat/hermes-file-tools (HEAD b138f44 'release: v1.9.1'), no source file touched. Backend (cd backend): go build ./... ok, go vet ./... ok, gofmt -l . printed nothing, go test ./... -count=1 -timeout=90s -> root package [no test files], internal/api ok 0.006s, internal/bridge ok 0.292s, internal/export ok 0.003s. Frontend (cd frontend, after export PATH=\"$HOME/.nvm/versions/node/v18.20.8/bin:$PATH\", node v18.20.8, node_modules already present so no npm ci needed): npx vitest --run -> 8 test files passed / 79 tests passed in ~1.6s; npm run build -> vite 6.4.3 built 981 modules in ~2.6s (largest chunk milkdown 466.28 kB). Notes for later features: git status only shows untracked .agents/tasks/** state files (task-fill-test-gaps and task-hermes-desk-file-write leftovers plus this task dir); frontend/dist is gitignored so npm run build leaves the tree clean. Any backend or frontend failure from here on is caused by this task's changes."
+}

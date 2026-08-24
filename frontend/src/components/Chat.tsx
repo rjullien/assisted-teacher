@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { AuthWebSocket, handleAuthExpired } from '../api'
 import { useI18n } from '../i18n'
-import { normalizeTool, isFileOp, toolLabel } from '../tools'
+import { normalizeTool, isFileOp, isToolRunning, toolLabel, WRITE_TOOL_NAMES } from '../tools'
 
 interface ChatMessage {
   id: string
@@ -70,7 +70,31 @@ export interface ChatSession {
   jobId: string | null
   /** Highest StreamEvent.seq already applied — the replay cursor. */
   lastSeq: number
+  /**
+   * Desk sub-mode. Lives in the session rather than in local state so the
+   * choice survives the unmounts described above (leaving the AI tab on mobile,
+   * switching to mode Lya): a teacher who enabled direct updates would
+   * otherwise silently fall back to copie/insertion on the next message.
+   * Optional so an older persisted session still loads — see deskSubMode below.
+   */
+  deskSubMode?: DeskSubMode
 }
+
+/**
+ * The two ways mode Desk can work.
+ *
+ * - `insert`: Lya answers in the chat, the teacher inserts what they keep. No
+ *   file is ever modified (the backend declares no file tool at all).
+ * - `direct`: Lya updates the working file herself through the backend file
+ *   tools, and the panel shows which file is at stake.
+ */
+export type DeskSubMode = 'insert' | 'direct'
+
+/**
+ * Default sub-mode: the non-destructive one. A teacher who never saw the
+ * selector must not discover it by finding a course file rewritten.
+ */
+export const DEFAULT_DESK_SUB_MODE: DeskSubMode = 'insert'
 
 /**
  * Progress tokens emitted by the pi bridge, mapped to i18n keys.
@@ -89,6 +113,7 @@ export const emptyChatSession: ChatSession = {
   input: '',
   jobId: null,
   lastSeq: 0,
+  deskSubMode: DEFAULT_DESK_SUB_MODE,
 }
 
 interface ChatProps {
@@ -101,7 +126,12 @@ interface ChatProps {
   onInsert: (text: string) => void
   programme: ProgrammeData | null
   agent?: 'lya' | 'pi'
-  onFileChanged?: (path: string) => void
+  /**
+   * Called when a bridge reports a file written. Returning false means the
+   * editor buffer was NOT reloaded because it held unsaved edits — the chat then
+   * warns the teacher, since the editor and the disk now differ (see App).
+   */
+  onFileChanged?: (path: string) => void | boolean | Promise<void | boolean>
   /** Lifted state. When omitted, Chat keeps its own (used by tests). */
   session?: ChatSession
   onSessionChange?: (session: ChatSession) => void
@@ -137,6 +167,27 @@ function fenceFor(content: string): string {
 }
 
 /**
+ * The `[Contexte: …]` line that opens a Desk request.
+ *
+ * `inlined` says whether the file text follows. It is false for a file that is
+ * still empty — a file just created from the tree, which is exactly the
+ * "complète ce fichier" case. That branch used to be a bare path with no word
+ * about the tools, while the backend declared read_file/write_file/patch_file in
+ * the same request: a compliant model then answered with text to copy instead of
+ * writing the file, and the feature looked like "Hermes ignores the tools".
+ */
+function deskContextLine(currentFile: string, subMode: DeskSubMode, inlined: boolean): string {
+  if (subMode === 'direct') {
+    return inlined
+      ? `[Contexte: je travaille sur le fichier "${currentFile}". Son contenu est reproduit ci-dessous. Tu peux aussi le relire et le modifier directement avec tes outils read_file, write_file et patch_file : quand je te demande de mettre à jour ce fichier, modifie-le avec patch_file au lieu de me renvoyer le texte à recopier.]`
+      : `[Contexte: je travaille sur le fichier "${currentFile}", qui est encore vide. Tu peux l'écrire directement avec tes outils read_file, write_file et patch_file : quand je te demande de le compléter, écris-le avec write_file au lieu de me renvoyer le texte à recopier.]`
+  }
+  return inlined
+    ? `[Contexte: je travaille sur le fichier "${currentFile}". Son contenu est reproduit ci-dessous : tu n'as pas accès à mon dossier de travail, ne cherche pas à l'ouvrir.]`
+    : `[Contexte: je travaille sur le fichier "${currentFile}"]`
+}
+
+/**
  * Builds the prompt for mode Desk, with the file content inlined.
  *
  * Mode Desk talks to Lya (Hermes), who runs in a different pod (namespace
@@ -147,15 +198,29 @@ function fenceFor(content: string): string {
  *
  * The question comes last so it stays the most recent, most salient part of
  * the message after a potentially long document.
+ *
+ * The context line depends on the sub-mode, the inlining does not. In `direct`
+ * the backend declares read_file/write_file/patch_file in the same request, so
+ * keeping the `insert` wording ("tu n'as pas accès à mon dossier de travail, ne
+ * cherche pas à l'ouvrir") told the model those tools did not exist: a compliant
+ * model then answers with text instead of calling patch_file, and the feature
+ * looks like "Hermes ignores the tools parameter". The content still travels in
+ * the prompt in both sub-modes — it is the fallback for a gateway that drops
+ * `tools`, and it saves a read_file round-trip when it does not.
  */
-function buildDeskPrompt(currentFile: string, fileContent: string, question: string): string {
+function buildDeskPrompt(
+  currentFile: string,
+  fileContent: string,
+  question: string,
+  subMode: DeskSubMode
+): string {
   const body =
     fileContent.length > MAX_INLINED_FILE_CHARS
       ? fileContent.slice(0, MAX_INLINED_FILE_CHARS) + TRUNCATION_NOTICE
       : fileContent
   const fence = fenceFor(body)
   return [
-    `[Contexte: je travaille sur le fichier "${currentFile}". Son contenu est reproduit ci-dessous : tu n'as pas accès à mon dossier de travail, ne cherche pas à l'ouvrir.]`,
+    deskContextLine(currentFile, subMode, true),
     '',
     `${fence}${currentFile}`,
     body,
@@ -248,16 +313,23 @@ export default function Chat({
   const sessionRef = useRef<ChatSession>(session)
   sessionRef.current = session
 
+  // Read through a ref for the same reason as handleStreamEvent below: a new
+  // onSessionChange identity must not change patchSession's identity, or the
+  // change propagates all the way to the WebSocket effect.
+  const onSessionChangeRef = useRef(onSessionChange)
+  onSessionChangeRef.current = onSessionChange
+
   const patchSession = useCallback(
     (patch: Partial<ChatSession> | ((prev: ChatSession) => Partial<ChatSession>)) => {
       const prev = sessionRef.current
       const delta = typeof patch === 'function' ? patch(prev) : patch
       const next = { ...prev, ...delta }
       sessionRef.current = next
-      if (onSessionChange) onSessionChange(next)
+      const notify = onSessionChangeRef.current
+      if (notify) notify(next)
       else setInternalSession(next)
     },
-    [onSessionChange]
+    []
   )
 
   const messages = session.messages
@@ -276,6 +348,14 @@ export default function Chat({
   )
 
   const setInput = useCallback((value: string) => patchSession({ input: value }), [patchSession])
+
+  // A session persisted before the selector existed has no deskSubMode: fall
+  // back to the safe sub-mode instead of undefined reaching the payload.
+  const deskSubMode: DeskSubMode = session.deskSubMode ?? DEFAULT_DESK_SUB_MODE
+  const setDeskSubMode = useCallback(
+    (value: DeskSubMode) => patchSession({ deskSubMode: value }),
+    [patchSession]
+  )
 
   // --- Transient state (intentionally reset on remount) ---------------------
   const [connected, setConnected] = useState(false)
@@ -342,23 +422,57 @@ export default function Chat({
 
         // file_changed is a synthetic event from the pi bridge, not a display event.
         if (tool.name === 'file_changed') {
-          if (tool.path && onFileChanged) onFileChanged(tool.path)
+          if (tool.path && onFileChanged) {
+            // App answers false when it kept a dirty buffer instead of reloading:
+            // the chat says "Fichier mis à jour", the editor still shows the old
+            // text and the next auto-save overwrites what the agent wrote. Silent,
+            // that divergence looks like the agent having lied about the write.
+            Promise.resolve(onFileChanged(tool.path)).then((reloaded) => {
+              if (reloaded === false) {
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: `tool-${Date.now()}-${Math.random()}`,
+                    role: 'tool',
+                    content: t('chat.bufferKept'),
+                  },
+                ])
+              }
+            })
+          }
           break
         }
 
-        if ((tool.name === 'write' || tool.name === 'edit') && tool.status === 'done') {
+        // Covers pi (write/edit) and the Hermes tool loop (write_file/patch_file):
+        // the name set lives in tools.ts so a new backend tool only has to be
+        // declared once.
+        if (WRITE_TOOL_NAMES.has(tool.name) && tool.status === 'done') {
           jobWroteFiles.current = true
         }
 
-        // File operations are an audit trail worth keeping in the thread.
-        // Everything else is Hermes working out loud: show it in a transient
-        // status line so it does not accumulate in the conversation.
-        if (isFileOp(tool)) {
-          const toolText = toolLabel(tool, t)
+        // File operations are an audit trail worth keeping in the thread — but
+        // only once they are over. Both bridges emit a `running` event before
+        // executing, and appending it too showed "✏️ Écriture de X" for a write
+        // that had not happened yet: every operation appeared twice, and a refused
+        // write was preceded by a line claiming it had landed. In progress belongs
+        // to the transient status line.
+        if (isFileOp(tool) && isToolRunning(tool)) {
+          setToolStatus(toolLabel(tool, t))
+        } else if (isFileOp(tool)) {
+          // The backend flags a write landing outside the working file named at
+          // the top of the panel. It is allowed (a companion file is legitimate)
+          // but never silent, otherwise the banner promises one file while
+          // another one changes.
+          const toolText = tool.outsideWorkingFile
+            ? `${toolLabel(tool, t)} ${t('chat.outsideWorkingFile')}`
+            : toolLabel(tool, t)
           setMessages((prev) => [
             ...prev,
             { id: `tool-${Date.now()}-${Math.random()}`, role: 'tool', content: toolText },
           ])
+          // The operation is over: drop the in-progress line, otherwise "Lecture
+          // de X en cours…" stays under the thread until the whole job ends.
+          setToolStatus('')
         } else {
           setToolStatus(toolLabel(tool, t))
         }
@@ -489,6 +603,18 @@ export default function Chat({
     }
   }, [onFileChanged, t, patchSession, setMessages])
 
+  // The socket effect reads the handler through this ref, never from its closure.
+  //
+  // handleStreamEvent depends on props (onFileChanged, t) whose identity the
+  // parent controls, and a new identity used to tear the socket down and open a
+  // new one. With App re-creating onFileChanged on every editor keystroke, that
+  // meant a fresh /ws/acp handshake per character: the running generation stalled
+  // until the new socket resubscribed, and Send did nothing in between because
+  // wsRef.current.connected was false while the `connected` state still said
+  // true. The ref keeps the latest handler without touching the socket.
+  const handleStreamEventRef = useRef(handleStreamEvent)
+  handleStreamEventRef.current = handleStreamEvent
+
   // Connect to backend WebSocket with auth-aware reconnect
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -498,7 +624,7 @@ export default function Chat({
     const authWs = new AuthWebSocket({
       url: wsUrl,
       onMessage: (data) => {
-        handleStreamEvent(data as StreamEvent)
+        handleStreamEventRef.current(data as StreamEvent)
       },
       onOpen: () => {
         console.log('WebSocket connected')
@@ -560,7 +686,9 @@ export default function Chat({
     return () => {
       authWs.close()
     }
-  }, [handleStreamEvent, agent]) // eslint-disable-line react-hooks/exhaustive-deps
+    // Only `agent` may rebuild the socket: it selects the endpoint (/ws/acp vs
+    // /ws/agent/pi). Everything else the callbacks need is read through a ref.
+  }, [agent]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -581,10 +709,15 @@ export default function Chat({
       // Mode Pi stays path-only on purpose: pi runs in this pod, mounts the same
       // workspace and owns a `read` tool, so inlining would duplicate context it
       // can fetch itself. Only Lya, who cannot reach the workspace, needs the text.
-      content =
-        agent !== 'pi' && fileContent
-          ? buildDeskPrompt(currentFile, fileContent, content)
-          : `[Contexte: je travaille sur le fichier "${currentFile}"]\n\n${content}`
+      if (agent === 'pi') {
+        content = `[Contexte: je travaille sur le fichier "${currentFile}"]\n\n${content}`
+      } else if (fileContent) {
+        content = buildDeskPrompt(currentFile, fileContent, content, deskSubMode)
+      } else {
+        // Empty file: nothing to inline, but the tools still have to be announced
+        // in the direct sub-mode — see deskContextLine.
+        content = `${deskContextLine(currentFile, deskSubMode, false)}\n\n${content}`
+      }
     }
 
     // Append the message and clear the draft in one patch, so a burst of
@@ -597,6 +730,9 @@ export default function Chat({
       content,
       system: systemPrompt,
       mode: agent === 'pi' ? 'pi' : 'desk',
+      // Sent unconditionally: the backend only reads it in mode desk, and always
+      // sending it keeps the payload shape stable for the logs.
+      deskMode: deskSubMode,
       currentFile: currentFile || undefined,
     })
   }
@@ -631,6 +767,48 @@ export default function Chat({
           </span>
         )}
       </div>
+      {/* Desk only: mode Pi always edits the file, so it has no sub-mode. */}
+      {agent !== 'pi' && (
+        <>
+          <div className="chat-submode">
+            <span className="chat-submode-label">{t('chat.subModeLabel')}</span>
+            <div className="chat-submode-switcher">
+              <button
+                type="button"
+                className={`chat-submode-btn ${deskSubMode === 'insert' ? 'active' : ''}`}
+                aria-pressed={deskSubMode === 'insert'}
+                title={t('chat.subModeInsertHint')}
+                onClick={() => setDeskSubMode('insert')}
+              >
+                {t('chat.subModeInsert')}
+              </button>
+              <button
+                type="button"
+                className={`chat-submode-btn ${deskSubMode === 'direct' ? 'active' : ''}`}
+                aria-pressed={deskSubMode === 'direct'}
+                title={t('chat.subModeDirectHint')}
+                onClick={() => setDeskSubMode('direct')}
+              >
+                {t('chat.subModeDirect')}
+              </button>
+            </div>
+          </div>
+          {/* The hint is rendered, not only a title attribute: a teacher who was
+              getting file writes before the selector existed has to be able to
+              find the toggle, and a tooltip is invisible on a touch screen. */}
+          <div className="chat-submode-hint">
+            {deskSubMode === 'direct' ? t('chat.subModeDirectHint') : t('chat.subModeInsertHint')}
+          </div>
+          {/* In the direct sub-mode Lya rewrites this exact file, so it is named
+              before the conversation: an edit landing in an unexpected course
+              file is not something a teacher can undo from here. */}
+          {deskSubMode === 'direct' && (
+            <div className={`chat-workfile ${currentFile ? '' : 'chat-workfile--none'}`}>
+              {currentFile ? t('chat.workingFile', { path: currentFile }) : t('chat.noWorkingFile')}
+            </div>
+          )}
+        </>
+      )}
       <div className="chat-messages">
         {messages.length === 0 && (
           <div style={{ color: 'var(--text-muted)', fontSize: '13px', padding: '16px' }}>
@@ -653,7 +831,12 @@ export default function Chat({
             {msg.role === 'assistant' && !msg.isStreaming && (
               <div className="actions">
                 {msg.piWroteFiles ? (
-                  <span className="chat-pi-updated">{t('piChat.updated')}</span>
+                  // Name the agent that actually wrote: in the direct sub-mode it
+                  // is Lya, and crediting Pi there sent the teacher looking at the
+                  // wrong mode when checking what changed.
+                  <span className="chat-pi-updated">
+                    {agent === 'pi' ? t('piChat.updated') : t('chat.updated')}
+                  </span>
                 ) : (
                   <button onClick={() => onInsert(msg.content)}>
                     {t('chat.insert')}

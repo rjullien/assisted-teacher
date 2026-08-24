@@ -1,0 +1,74 @@
+{
+  "task_id": "task-hermes-file-tools",
+  "task_description": "Give Lya real file access on the backend in mode Desk: make the Hermes bridge multi-turn (OpenAI-style function calling) and implement read_file, write_file and patch_file tools jailed to WORKSPACE_DIR, so the teacher can say 'update this file' and Lya can request it, read it and complete it. Mode Desk gets two sub-modes (copie/insertion and mise à jour directe, the latter showing the working file at the top of the panel). Must degrade silently to today's single-turn behaviour if Hermes ignores the tools parameter, must not touch mode Lya or mode Pi, and must not remove the v1.9.1 prompt inlining fallback. Branch: feat/hermes-file-tools.",
+  "status": "completed",
+  "feature_order": [
+    "FEAT-001",
+    "FEAT-002",
+    "FEAT-003",
+    "FEAT-004"
+  ],
+  "blocked_reason": null,
+  "verification": {
+    "build": "pass",
+    "tests": "pass",
+    "test_quality": "pass",
+    "docker_build": "skipped",
+    "final_state": "Re-verified at f284f66 after two review-fix rounds: backend go build/vet/gofmt(silent)/go test all green; frontend 10 vitest files / 121 tests (79 at baseline) and npm run build ok. Semantic review reached APPROVED on pass v3 (.agents/tasks/task-hermes-file-tools/2025-08-24-204900-review.md) after NEEDS_CHANGES on v1 and v2; the v2 blocking regression (chat WebSocket recreated on every editor keystroke) was fixed in 66855db and is covered by behavioural tests in App.test.tsx and Chat.test.tsx. Eight non-blocking residuals are listed in the v3 review as follow-up work.",
+    "summary": "Orchestrator-run final pass on feat/hermes-file-tools. Backend: go build, go vet, gofmt -l (no output), go test ./... -count=1 -timeout=90s all green (internal/api, internal/bridge, internal/export). Frontend: 8 vitest files / 90 tests passing (baseline was 79) and npm run build ok. git diff vs main is empty for backend/internal/bridge/pi.go, frontend/src/components/LyaChat.tsx and version.json. Test quality reviewed by reading the new tests: the backend tests drive real WebSocket jobs against a scripted fake Hermes that records every decoded request body, assert on files actually created/read/patched in t.TempDir(), on the role:\"tool\" messages fed back in the follow-up request, on the declared tools array, on request counts (loop cap = exactly 8, degradation = exactly 1) and on file_changed events; the frontend tests drive real WS messages and assert rendered DOM including the working-file banner's position above the conversation. Each feature was additionally mutation-verified by its sub-agent, and one surviving mutant in safePath was found and closed. Docker build skipped: the deployment images are built by the GitHub Actions CI, not required for this change.",
+    "unverifiable": "Whether the real Hermes gateway forwards the OpenAI tools parameter upstream cannot be tested from this sandbox (cluster unreachable). The loop degrades to the previous single-turn behaviour when no tool_calls come back, and every job logs one greppable line 'hermes: tool_calls supported=true|false (mode=... deskMode=... loops=... toolCalls=...)' to settle it from production logs."
+  },
+  "user_steering": [
+    {
+      "verbatim_fr": "En fait en mode desk ia il faut deux mode. Un mode actuel avec copie et insertion et un mode update direct du fichier dans ce mode tu affiches le fichier de travail en haut du mode desk",
+      "handled_by": "FEAT-004 (done, commit 8d37559): sous-modes « Copie / insertion » (défaut, aucune écriture) et « Mise à jour directe » (outils fichiers actifs, fichier de travail affiché en haut du panneau Desk)."
+    },
+    {
+      "verbatim_fr": "Release quand les tests sont ok",
+      "handled_by": "orchestrator: this agent cannot push, merge, bump version.json or release. Reported upward once all features are green. Next version per AGENTS.md would be the minor bump 1.9.1 -> 1.10.0."
+    }
+  ],
+  "review_dispositions": [
+    {
+      "review": "2025-08-24-200500-review.md",
+      "pass": "v1",
+      "verdict_addressed": "NEEDS_CHANGES",
+      "summary": "14 issues, 13 fixed and 1 partially fixed with the remainder out of scope. No feature status changed; every behaviour change is covered by a test and each was mutation-verified (10 backend mutants, 7 frontend mutants, all caught). Suites after the fixes: backend go build/vet/gofmt/test green, frontend 9 vitest files / 108 tests (was 8 / 90) and npm run build ok.",
+      "per_issue": {
+        "1 prompt contradicts the declared tools": "FIXED — buildDeskPrompt context line is sub-mode aware, inlining and MAX_INLINED_FILE_CHARS untouched (FEAT-004)",
+        "2 tool errors rendered as successes": "FIXED — status/error surfaced, dedicated failure label (FEAT-003)",
+        "3 malformed arguments leave no trace": "FIXED — a failed known file tool stays in the thread without a path (FEAT-003)",
+        "4 fail-open deskMode default": "FIXED — three-state insert/direct/legacy, tools require an explicit direct (FEAT-002)",
+        "5 v1.9.1 write path off by default": "PARTIALLY FIXED — legacy clients keep the v1.9.0 interception and the sub-mode hint is now rendered and points at the toggle; the release note belongs to the release the orchestrator owns (FEAT-004)",
+        "6 writes not scoped to the working file": "FIXED as flagging, not refusing — a hard jail would break legitimate companion-file creation (FEAT-002 backend flag + FEAT-003 rendering)",
+        "7 read_file has no extension allowlist": "FIXED — allowedFileExts applies to reads too (FEAT-002)",
+        "8 no size cap on write_file": "FIXED — maxWriteFileChars = 200000 runes (FEAT-002)",
+        "9 truncated read then full rewrite": "FIXED — write_file refuses to shrink a file longer than maxReadFileChars (FEAT-002)",
+        "10 no cumulative context budget": "FIXED — maxToolResultChars = 60000 with explicit notices; the generic 4xx wording deliberately left alone (FEAT-002)",
+        "11 loop-cap message understates what happened": "FIXED — the cut message says the writes already applied are kept (FEAT-002)",
+        "12 finish_reason decoded but unused": "FIXED — cross-checked: a call is dropped when the turn did not finish on tool_calls and its arguments do not decode (FEAT-002)",
+        "13 editor buffer reload discards unsaved edits": "FIXED — editorSync.shouldReloadBuffer guards App.handleFileChanged; no UI banner (App has no notice infrastructure) (FEAT-004)",
+        "14 untested branches": "FIXED — unknown tool, malformed args, two calls in one turn, synthesised call_<i> id, chunk.error after a write, plus a test for every new guard (FEAT-002)"
+      },
+      "constraints_respected": "pi.go, LyaChat.tsx and version.json still byte-identical to main (git diff empty). buildDeskPrompt and MAX_INLINED_FILE_CHARS kept, inlining active in both sub-modes. Mode lya declares no tools and writes nothing. Degradation to the previous single-turn behaviour unchanged (exactly one request when no tool_calls come back). The single greppable line 'hermes: tool_calls supported=true|false (...)' unchanged. Nothing claims the loop was verified against the real Hermes gateway."
+    },
+    {
+      "review": "2025-08-24-202600-review.md",
+      "pass": "v2",
+      "verdict_addressed": "NEEDS_CHANGES",
+      "summary": "9 issues, all 9 fixed in commit 66855db. No feature status changed. Every behaviour change is covered by a test and each was mutation-verified (5 backend mutants, 6 frontend mutants, all killed). Suites after the fixes: backend go build/vet/gofmt/test green, frontend 10 vitest files / 121 tests (was 9 / 108), tsc --noEmit clean and npm run build ok.",
+      "per_issue": {
+        "1 chat WebSocket recycled per keystroke (regression)": "FIXED — App reads currentFile/fileContent/lastSavedContent through refs so handleFileChanged has deps [], and Chat holds handleStreamEvent (and onSessionChange, via patchSession) in refs with the socket effect on [agent] only. Both sides fixed on purpose: any parent passing an unstable callback would otherwise reintroduce it. Covered by Chat.test.tsx 'does not rebuild the WebSocket when the editor content changes' (single instance + events still routed to the latest callback) and App.test.tsx 'hands Chat the same onFileChanged while the teacher types'.",
+        "2 running tool events render as completed writes": "FIXED — isToolRunning in tools.ts; Chat routes a running file op to the transient status line with the new piChat.toolReading/toolWriting wording and appends only terminal events to the thread, clearing the status line. Also fixes mode Pi, which emits the same running/done pair.",
+        "3 budget suppresses write confirmations": "FIXED — budgetToolResult(result, used, alwaysDeliver): confirmations and refusals always reach the model, hard-capped at maxConfirmationChars = 2000 and still counted against the budget; only read_file results are cut.",
+        "4 echoed write arguments bypass the budget": "FIXED — shrinkEchoedArgs truncates long string arguments in the assistant echo (maxEchoedArgsChars = 4000, per-field 1000) while keeping valid JSON and the same keys; the file on disk still gets the full content, asserted by the test.",
+        "5 dropped incomplete call is invisible": "FIXED — the finish_reason cross-check emits an error tool event with the reason and turnResult.droppedCalls feeds sawToolCalls/toolCallCount, so the greppable diagnostic reports supported=true and counts the call. Asserted with a log-capture helper (captureLog) because the diagnostic is a log line by design.",
+        "6 no tool announcement on an empty working file": "FIXED — deskContextLine(currentFile, subMode, inlined) is shared by buildDeskPrompt and the path-only branch; the direct sub-mode announces the three tools on an empty file, the insert sub-mode keeps the bare path wording.",
+        "7 working-file flag inert with no file open": "FIXED — outsideWorkingFile flags every write when no working file was announced, and the tool result carries a distinct FR warning instead of interpolating an empty path.",
+        "8 buffer/disk divergence is silent": "FIXED — App.handleFileChanged returns false when it kept a dirty buffer and Chat appends the new chat.bufferKept line (fr + en) telling the teacher the AI's version is not shown and the next save will overwrite it. No new UI infrastructure, as the review suggested.",
+        "9 untested paths in the new frontend behaviour": "FIXED — new frontend/src/App.test.tsx covers the shouldReloadBuffer wiring and the callback identity; Chat.test.tsx covers the running events, the empty-file announcement and the bufferKept notice; backend covers a write confirmation after the budget is exhausted and the size of the echoed arguments across turns."
+      },
+      "constraints_respected": "git diff vs main is still empty for backend/internal/bridge/pi.go, frontend/src/components/LyaChat.tsx and version.json. buildDeskPrompt and MAX_INLINED_FILE_CHARS kept with the inlining active in both sub-modes. Mode lya declares no tools and writes nothing. Degradation to the previous single-turn behaviour unchanged. The single greppable line 'hermes: tool_calls supported=true|false (...)' unchanged (a dropped call now makes it read true, which is what it means). Nothing claims the loop was verified against the real Hermes gateway. No push, no PR, no version bump, no tag."
+    }
+  ]
+}

@@ -48,7 +48,8 @@ interface MobileLayoutProps {
   onFlushRef: React.MutableRefObject<(() => Promise<void>) | null>
   onInsertFromChat: (text: string) => void
   agent?: 'lya' | 'pi'
-  onFileChanged?: (path: string) => void
+  /** See Chat: false means the dirty editor buffer was kept, so nothing reloaded. */
+  onFileChanged?: (path: string) => void | boolean | Promise<void | boolean>
   /** Held by App: the chat tab is unmounted every time another tab is shown. */
   chatSession?: ChatSession
   onChatSessionChange?: (session: ChatSession) => void
