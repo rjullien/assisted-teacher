@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -68,13 +69,42 @@ func main() {
 	})
 
 	// Hermes bridge (connects to Lya via HTTP Runs API — reconnectable, no timeout issues)
-	if *hermesKey != "" {
+	hermesEnabled := *hermesKey != ""
+	if hermesEnabled {
 		hermesBridge := bridge.NewHermesBridge(*hermesURL, *hermesKey)
 		mux.HandleFunc("/ws/acp", hermesBridge.HandleWebSocket)
 		log.Printf("Hermes bridge: %s", *hermesURL)
 	} else {
 		log.Println("WARNING: No HERMES_API_KEY set — chat disabled")
 	}
+
+	// Pi bridge (agent that can read/write course files)
+	piEnabled := envOr("PI_ENABLED", "") == "true"
+	if piEnabled {
+		piCmd := envOr("PI_CMD", "pi")
+		piModels := envOr("PI_MODELS_JSON", "")
+		piBridge := bridge.NewPiBridge(piCmd, *workDir, piModels)
+		mux.HandleFunc("/ws/agent/pi", piBridge.HandleWebSocket)
+		log.Printf("Pi bridge: cmd=%s, workDir=%s", piCmd, *workDir)
+	}
+
+	// Agent discovery (frontend hides pi button when not available)
+	mux.HandleFunc("GET /api/agents", func(w http.ResponseWriter, r *http.Request) {
+		type agentInfo struct {
+			ID      string `json:"id"`
+			Label   string `json:"label"`
+			Default bool   `json:"default"`
+		}
+		agents := []agentInfo{}
+		if hermesEnabled {
+			agents = append(agents, agentInfo{ID: "lya", Label: "Lya", Default: true})
+		}
+		if piEnabled {
+			agents = append(agents, agentInfo{ID: "pi", Label: "Pi", Default: !hermesEnabled})
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		json.NewEncoder(w).Encode(agents)
+	})
 
 	// Health
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {

@@ -91,6 +91,17 @@
   },
   "mode": {
     "desk": "Desk",
+    "pi": "Pi",
+    "piTitle": "Pi — modifie directement tes fichiers de cours",
+    "deskTitle": "Desk — Lya répond dans le chat, tu insères ce que tu gardes",
     "lya": "Lya"
+  },
+  "piChat": {
+    "hint": "Pi modifie directement le fichier ouvert.",
+    "working": "✍️ Modification du fichier en cours...",
+    "updated": "Fichier mis à jour par Pi.",
+    "toolRead": "📄 Lecture de {path}",
+    "toolWrite": "✏️ Écriture de {path}",
+    "toolOther": "🔧 {name}"
   }
 }

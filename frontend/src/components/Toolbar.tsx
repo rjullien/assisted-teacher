@@ -1,12 +1,13 @@
 import { useI18n } from '../i18n'
 
 export type Niveau = 'seconde' | 'premiere' | 'terminale'
-export type AppMode = 'desk' | 'lya'
+export type AppMode = 'desk' | 'pi' | 'lya'
 
 interface ToolbarProps {
   currentFile: string | null
   niveau: Niveau
   mode: AppMode
+  piAvailable?: boolean
   onNiveauChange: (niveau: Niveau) => void
   onModeChange: (mode: AppMode) => void
   onExportPDF: () => void
@@ -18,6 +19,7 @@ export default function Toolbar({
   currentFile,
   niveau,
   mode,
+  piAvailable,
   onNiveauChange,
   onModeChange,
   onExportPDF,
@@ -25,6 +27,8 @@ export default function Toolbar({
   onToggleProgramme,
 }: ToolbarProps) {
   const { t, locale, setLocale } = useI18n()
+
+  const isWorkspace = mode === 'desk' || mode === 'pi'
 
   return (
     <div className="toolbar">
@@ -36,6 +40,15 @@ export default function Toolbar({
         >
           {t('mode.desk')}
         </button>
+        {piAvailable && (
+          <button
+            className={`toolbar-mode-btn ${mode === 'pi' ? 'active' : ''}`}
+            onClick={() => onModeChange('pi')}
+            title={t('mode.piTitle')}
+          >
+            {t('mode.pi')}
+          </button>
+        )}
         <button
           className={`toolbar-mode-btn ${mode === 'lya' ? 'active' : ''}`}
           onClick={() => onModeChange('lya')}
@@ -44,8 +57,8 @@ export default function Toolbar({
         </button>
       </div>
 
-      {/* Desk-specific controls */}
-      {mode === 'desk' && (
+      {/* Workspace controls (desk + pi) */}
+      {isWorkspace && (
         <>
           <div className="toolbar-niveau">
             <label htmlFor="niveau-select">{t('toolbar.niveau')}</label>

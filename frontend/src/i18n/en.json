@@ -91,6 +91,17 @@
   },
   "mode": {
     "desk": "Desk",
+    "pi": "Pi",
+    "piTitle": "Pi — edits your course files directly",
+    "deskTitle": "Desk — Lya answers in the chat, you insert what you keep",
     "lya": "Lya"
+  },
+  "piChat": {
+    "hint": "Pi edits the open file directly.",
+    "working": "✍️ Editing the file...",
+    "updated": "File updated by Pi.",
+    "toolRead": "📄 Reading {path}",
+    "toolWrite": "✏️ Writing {path}",
+    "toolOther": "🔧 {name}"
   }
 }

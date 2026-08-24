@@ -47,6 +47,8 @@ interface MobileLayoutProps {
   onSave: (content: string) => Promise<void>
   onFlushRef: React.MutableRefObject<(() => Promise<void>) | null>
   onInsertFromChat: (text: string) => void
+  agent?: 'lya' | 'pi'
+  onFileChanged?: (path: string) => void
 }
 
 export default function MobileLayout({
@@ -63,6 +65,8 @@ export default function MobileLayout({
   onSave,
   onFlushRef,
   onInsertFromChat,
+  agent,
+  onFileChanged,
 }: MobileLayoutProps) {
   const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<Tab>('files')
@@ -101,6 +105,8 @@ export default function MobileLayout({
               setActiveTab('editor')
             }}
             programme={programme}
+            agent={agent}
+            onFileChanged={onFileChanged}
           />
         )}
         {activeTab === 'programme' && (
