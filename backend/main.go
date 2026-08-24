@@ -79,7 +79,7 @@ func main() {
 	}
 
 	// Pi bridge (agent that can read/write course files)
-	piEnabled := envOr("PI_ENABLED", "") == "true"
+	piEnabled := envOr("PI_ENABLED", "true") == "true"
 	if piEnabled {
 		piCmd := envOr("PI_CMD", "pi")
 		piModels := envOr("PI_MODELS_JSON", "")

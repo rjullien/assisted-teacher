@@ -1,14 +1,16 @@
 #!/bin/sh
 set -e
 
-# Render models.json with the Bifrost API key (trimmed).
-# pi's "$VAR" interpolation does NOT trim, and Infisical secrets often carry
-# a trailing \n. The Go backend already does strings.TrimSpace on HERMES_API_KEY,
-# but pi reads models.json directly — so we trim here.
-if [ "$PI_ENABLED" = "true" ] && [ -n "$BIFROST_API_KEY" ]; then
-  TRIMMED_KEY=$(printf '%s' "$BIFROST_API_KEY" | tr -d '[:space:]')
-  sed "s|__BIFROST_API_KEY__|${TRIMMED_KEY}|g" /data/pi-config/models.json.tmpl > /data/pi-config/models.json
-  echo "pi: models.json rendered (keyLen=${#TRIMMED_KEY})"
+# Render models.json for pi.
+# Bifrost is accessible without an API key from inside the cluster.
+# Default URL matches the tripkit-backend pattern: bifrost.openclaw.svc.cluster.local:8080/v1
+LLM_URL="${BIFROST_URL:-http://bifrost.openclaw.svc.cluster.local:8080/v1}"
+
+if [ -f /data/pi-config/models.json.tmpl ]; then
+  TRIMMED_URL=$(printf '%s' "$LLM_URL" | tr -d '[:space:]')
+  sed -e "s|__LLM_API_URL__|${TRIMMED_URL}|g" \
+      /data/pi-config/models.json.tmpl > /data/pi-config/models.json
+  echo "pi: models.json rendered (url=${TRIMMED_URL})"
 fi
 
 exec assisted-teacher "$@"
