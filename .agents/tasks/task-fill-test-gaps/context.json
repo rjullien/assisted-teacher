@@ -1,0 +1,28 @@
+{
+  "project_type": "Web app - React + Vite frontend, Go backend",
+  "language": "TypeScript (frontend), Go (backend)",
+  "build_system": "npm (frontend), go build (backend), Makefile at root",
+  "test_framework": "Vitest + React Testing Library (frontend), standard Go testing (backend)",
+  "build_command": "cd frontend && npm run build",
+  "test_command": "cd frontend && npx vitest --run && cd ../backend && go test ./... -count=1 -timeout=60s",
+  "verification_instructions": "1. Run frontend tests: cd frontend && npx vitest --run. 2. Run backend tests: cd backend && go test ./... -count=1 -timeout=60s. 3. Build frontend: cd frontend && npm run build.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "export PATH=\"$HOME/.nvm/versions/node/v18.20.8/bin:$PATH\" && cd frontend && npm ci",
+  "environment_constraints": "OPEN_INTERNET network. Node 18 available via nvm. Go 1.25.1 at /usr/local/go/bin/go. No real LLM/pi/WebSocket backend needed - all tests use mocks.",
+  "contribution_requirements": "Conventional commits (feat:, fix:, etc.). Feature branch -> PR. Tests live next to the component (e.g. Chat.test.tsx). Backend tests in _test.go same package. All tests must use mocks/fakes - NO real tokens consumed.",
+  "key_patterns": "Frontend: renderWithI18n helper in src/test/i18n-wrapper.tsx wraps components with I18nContext. Global MockWebSocket in src/test/setup.ts auto-opens after setTimeout(0) and records sentMessages[]. Backend: httptest.NewRequest + httptest.NewRecorder pattern. setupTestWorkspace creates temp dirs with sample files.",
+  "relevant_files": [
+    "frontend/src/components/Chat.tsx",
+    "frontend/src/components/Chat.test.tsx",
+    "frontend/src/components/LyaChat.tsx",
+    "frontend/src/components/Toolbar.tsx",
+    "frontend/src/components/Toolbar.test.tsx",
+    "frontend/src/api.ts",
+    "frontend/src/test/setup.ts",
+    "frontend/src/test/i18n-wrapper.tsx",
+    "frontend/src/hooks/useAutoSave.ts",
+    "backend/internal/api/programme.go",
+    "backend/internal/api/files_test.go"
+  ],
+  "directory_structure": "frontend/src/components/ - React components and their tests. frontend/src/test/ - test setup and helpers. frontend/src/hooks/ - custom hooks. frontend/src/api.ts - HTTP/WebSocket client. backend/internal/api/ - REST handlers. backend/internal/bridge/ - pi/hermes bridge. backend/internal/export/ - PDF/DOCX export."
+}

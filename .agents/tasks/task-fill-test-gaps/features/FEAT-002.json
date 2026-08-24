@@ -1,0 +1,27 @@
+{
+  "id": "FEAT-002",
+  "type": "feat",
+  "description": "Add priority 1 frontend tests: Chat session persistence, identity in system prompt, and upload path correctness. Plus priority 3 tests: LyaChat rendering/identity, Toolbar pi button, and api.ts AuthWebSocket.",
+  "status": "pending",
+  "steps": [
+    "In frontend/src/components/Chat.test.tsx, add a test 'session persists across unmount/remount': render Chat with an external session prop, type a message, unmount, remount with the same session object, verify the message and input draft survive. Uses renderWithI18n and the existing MockWebSocket pattern.",
+    "In frontend/src/components/Chat.test.tsx, add a test 'identity is in every system prompt': render Chat with userName='Alice', send two messages via the mock WS, inspect the sentMessages on the MockWebSocket instance, verify both payloads contain system field with 'Tu parles avec Alice'.",
+    "In frontend/src/components/Chat.test.tsx, add a test 'upload writes to correct path': mock putText from api.ts, trigger file upload (or the Editor/FileTree write path that uses putText), verify the path includes the parent directory.",
+    "Create frontend/src/components/LyaChat.test.tsx with tests: renders the Lya header/title, sends userName in system field on every message (verify 'Tu parles avec' in WS payload), shows empty state hint when no messages. Follow the exact same patterns as Chat.test.tsx (renderWithI18n, act + setTimeout for WS open).",
+    "In frontend/src/components/Toolbar.test.tsx, add a test 'shows Pi button only when piAvailable=true': render with piAvailable=false, verify no Pi button; render with piAvailable=true, verify Pi button is present and clickable.",
+    "Create frontend/src/api.test.ts testing AuthWebSocket: instantiate AuthWebSocket with the MockWebSocket global, verify it calls onOpen, verify send() records messages, verify close() sets connected to false. Test reconnect: simulate a close event (code 1006), verify a new WebSocket is created after the backoff delay. Test auth expiry detection: simulate receiving HTML (Authelia redirect) as a message, verify onDisconnect is called with 'auth_expired'."
+  ],
+  "acceptance_criteria": [
+    "Chat.test.tsx has at least 2 new tests (session persistence + identity in system prompt) that pass",
+    "LyaChat.test.tsx exists with at least 3 tests that pass",
+    "Toolbar.test.tsx has a new test for the Pi button that passes",
+    "api.test.ts exists with at least 3 tests for AuthWebSocket that pass",
+    "All existing tests still pass",
+    "npx vitest --run passes with no failures"
+  ],
+  "verification": [
+    "cd frontend && npx vitest --run"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

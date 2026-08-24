@@ -1,0 +1,7 @@
+{
+  "task_id": "task-fill-test-gaps",
+  "task_description": "Fill identified test coverage gaps: Chat session persistence, identity in system prompts, LyaChat tests, Toolbar pi button, api.ts AuthWebSocket, and backend ProgrammeHandler",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003"],
+  "blocked_reason": null
+}

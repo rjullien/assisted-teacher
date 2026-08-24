@@ -1,0 +1,22 @@
+{
+  "id": "FEAT-001",
+  "type": "chore",
+  "description": "Setup - install frontend dependencies and verify baseline tests pass",
+  "status": "completed",
+  "steps": [
+    "Export Node 18 PATH: export PATH=\"$HOME/.nvm/versions/node/v18.20.8/bin:$PATH\"",
+    "Run npm ci in frontend/ to install dependencies",
+    "Run npx vitest --run in frontend/ to confirm all 61 existing tests pass",
+    "Run go test ./... -count=1 -timeout=60s in backend/ to confirm existing backend tests pass"
+  ],
+  "acceptance_criteria": [
+    "All existing frontend tests pass (61 tests)",
+    "All existing backend tests pass"
+  ],
+  "verification": [
+    "cd frontend && npx vitest --run",
+    "cd backend && go test ./... -count=1 -timeout=60s"
+  ],
+  "blocked_reason": null,
+  "findings": "All 61 frontend tests pass (6 test files: Chat.test.tsx 9, Toolbar.test.tsx 9, Editor.test.tsx 6, FileTree.test.tsx 12, ProgrammePanel.test.tsx 16, tools.test.ts 9). All backend tests pass (internal/api, internal/bridge, internal/export). Node 18 via nvm works fine. Go 1.25.1 at /usr/local/go/bin/go works fine. npm ci completes successfully despite nanoid engine warning (cosmetic only)."
+}
