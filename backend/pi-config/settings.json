@@ -1,0 +1,13 @@
+{
+  "defaultProjectTrust": "never",
+  "compaction": {
+    "enabled": true
+  },
+  "retry": {
+    "enabled": true,
+    "maxRetries": 2
+  },
+  "tools": {
+    "allowlist": ["read", "write", "edit", "grep", "find", "ls"]
+  }
+}
