@@ -171,16 +171,23 @@ function fenceFor(content: string): string {
  *
  * `inlined` says whether the file text follows. It is false for a file that is
  * still empty — a file just created from the tree, which is exactly the
- * "complète ce fichier" case. That branch used to be a bare path with no word
- * about the tools, while the backend declared read_file/write_file/patch_file in
- * the same request: a compliant model then answered with text to copy instead of
- * writing the file, and the feature looked like "Hermes ignores the tools".
+ * "complète ce fichier" case.
+ *
+ * The `direct` wording deliberately names NO tool. It used to announce
+ * read_file/write_file/patch_file, the tools the backend declares in the same
+ * request, and production showed what that produced: Hermes never calls them
+ * (she has her own file tools, on her own filesystem), so being told she had
+ * tools sent her hunting for the file in /opt/data and /opt/data/home, where it
+ * has never existed. The whole exchange was spent on that search and the teacher
+ * saw nothing change. So: the content is already here, do not look for it, and a
+ * write at the same relative path is mirrored into the workspace by the backend
+ * (handleToolFileWrite in backend/internal/bridge/hermes.go).
  */
 function deskContextLine(currentFile: string, subMode: DeskSubMode, inlined: boolean): string {
   if (subMode === 'direct') {
     return inlined
-      ? `[Contexte: je travaille sur le fichier "${currentFile}". Son contenu est reproduit ci-dessous. Tu peux aussi le relire et le modifier directement avec tes outils read_file, write_file et patch_file : quand je te demande de mettre à jour ce fichier, modifie-le avec patch_file au lieu de me renvoyer le texte à recopier.]`
-      : `[Contexte: je travaille sur le fichier "${currentFile}", qui est encore vide. Tu peux l'écrire directement avec tes outils read_file, write_file et patch_file : quand je te demande de le compléter, écris-le avec write_file au lieu de me renvoyer le texte à recopier.]`
+      ? `[Contexte: je travaille sur le fichier "${currentFile}". Son contenu exact est reproduit ci-dessous : ne cherche pas ce fichier sur ta propre machine, il n'y est pas, et son contenu ci-dessous fait référence. Pour appliquer une modification, écris le fichier au même chemin relatif "${currentFile}" : ton écriture est recopiée automatiquement dans mon dossier de travail. Ne me renvoie pas le texte à recopier à la main.]`
+      : `[Contexte: je travaille sur le fichier "${currentFile}", qui est encore vide. Ne le cherche pas sur ta propre machine, il n'y est pas. Pour le créer, écris-le au même chemin relatif "${currentFile}" : ton écriture est recopiée automatiquement dans mon dossier de travail. Ne me renvoie pas le texte à recopier à la main.]`
   }
   return inlined
     ? `[Contexte: je travaille sur le fichier "${currentFile}". Son contenu est reproduit ci-dessous : tu n'as pas accès à mon dossier de travail, ne cherche pas à l'ouvrir.]`
@@ -199,14 +206,10 @@ function deskContextLine(currentFile: string, subMode: DeskSubMode, inlined: boo
  * The question comes last so it stays the most recent, most salient part of
  * the message after a potentially long document.
  *
- * The context line depends on the sub-mode, the inlining does not. In `direct`
- * the backend declares read_file/write_file/patch_file in the same request, so
- * keeping the `insert` wording ("tu n'as pas accès à mon dossier de travail, ne
- * cherche pas à l'ouvrir") told the model those tools did not exist: a compliant
- * model then answers with text instead of calling patch_file, and the feature
- * looks like "Hermes ignores the tools parameter". The content still travels in
- * the prompt in both sub-modes — it is the fallback for a gateway that drops
- * `tools`, and it saves a read_file round-trip when it does not.
+ * The context line depends on the sub-mode (see deskContextLine), the inlining
+ * does not: in `direct` too, the inlined content is what Lya must work from,
+ * because production showed she does not call the tools the backend declares and
+ * cannot see this workspace at all.
  */
 function buildDeskPrompt(
   currentFile: string,
