@@ -16,6 +16,14 @@
       "impact": "Not covered by FEAT-002 (backend multi-turn tool loop) nor FEAT-003 (tool event labels). Needs a new frontend feature: a sub-mode toggle in Chat.tsx sent to the backend alongside mode:\"desk\", a working-file header in the Desk panel, fr/en i18n strings, and gating of the direct-write path on that sub-mode. The backend write interception (handleToolFileWrite, gated on mode==\"desk\") likely needs to honour the sub-mode flag too so the copy/insert mode never mutates files.",
       "status": "not_implemented_here",
       "note": "Recorded by the FEAT-001 sub-agent, which is scoped to baseline verification only and made no source changes. The planner should add this as a new feature (e.g. FEAT-004) or amend FEAT-003 before implementation."
+    },
+    {
+      "received_during": "FEAT-001",
+      "verbatim_fr": "Release quand les tests sont ok",
+      "interpretation": "Once the whole task's tests are green, ship a release following AGENTS.md: bump version.json, commit 'release: vX.Y.Z' on main, tag vX.Y.Z, push the tag, then create the GitHub release. Current version is 1.9.1; this task adds a backward-compatible feature so the next version should be the minor bump 1.10.0.",
+      "impact": "Cannot be done by a feature sub-agent: AGENTS.md requires the release to happen from a clean main after the feature branch is merged (feature branch -> PR -> squash merge), and this sub-agent is explicitly forbidden to bump version.json, tag, release or push. FEAT-002, FEAT-003 and the Desk sub-mode work are also still pending, so there is nothing feature-complete to release yet.",
+      "status": "deferred_to_orchestrator",
+      "note": "Release gate: only after FEAT-002 + FEAT-003 (+ the Desk sub-mode feature) are implemented and both suites are green (backend go build/vet/gofmt/test, frontend vitest + npm run build). The orchestrator owns the push, the PR, the squash merge and the AGENTS.md release procedure."
     }
   ]
 }
