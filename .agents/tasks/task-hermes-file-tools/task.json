@@ -1,7 +1,7 @@
 {
   "task_id": "task-hermes-file-tools",
   "task_description": "Give Lya real file access on the backend in mode Desk: make the Hermes bridge multi-turn (OpenAI-style function calling) and implement read_file, write_file and patch_file tools jailed to WORKSPACE_DIR, so the teacher can say 'update this file' and Lya can request it, read it and complete it. Mode Desk gets two sub-modes (copie/insertion and mise à jour directe, the latter showing the working file at the top of the panel). Must degrade silently to today's single-turn behaviour if Hermes ignores the tools parameter, must not touch mode Lya or mode Pi, and must not remove the v1.9.1 prompt inlining fallback. Branch: feat/hermes-file-tools.",
-  "status": "in_progress",
+  "status": "completed",
   "feature_order": [
     "FEAT-001",
     "FEAT-002",
@@ -14,6 +14,7 @@
     "tests": "pass",
     "test_quality": "pass",
     "docker_build": "skipped",
+    "final_state": "Re-verified at f284f66 after two review-fix rounds: backend go build/vet/gofmt(silent)/go test all green; frontend 10 vitest files / 121 tests (79 at baseline) and npm run build ok. Semantic review reached APPROVED on pass v3 (.agents/tasks/task-hermes-file-tools/2025-08-24-204900-review.md) after NEEDS_CHANGES on v1 and v2; the v2 blocking regression (chat WebSocket recreated on every editor keystroke) was fixed in 66855db and is covered by behavioural tests in App.test.tsx and Chat.test.tsx. Eight non-blocking residuals are listed in the v3 review as follow-up work.",
     "summary": "Orchestrator-run final pass on feat/hermes-file-tools. Backend: go build, go vet, gofmt -l (no output), go test ./... -count=1 -timeout=90s all green (internal/api, internal/bridge, internal/export). Frontend: 8 vitest files / 90 tests passing (baseline was 79) and npm run build ok. git diff vs main is empty for backend/internal/bridge/pi.go, frontend/src/components/LyaChat.tsx and version.json. Test quality reviewed by reading the new tests: the backend tests drive real WebSocket jobs against a scripted fake Hermes that records every decoded request body, assert on files actually created/read/patched in t.TempDir(), on the role:\"tool\" messages fed back in the follow-up request, on the declared tools array, on request counts (loop cap = exactly 8, degradation = exactly 1) and on file_changed events; the frontend tests drive real WS messages and assert rendered DOM including the working-file banner's position above the conversation. Each feature was additionally mutation-verified by its sub-agent, and one surviving mutant in safePath was found and closed. Docker build skipped: the deployment images are built by the GitHub Actions CI, not required for this change.",
     "unverifiable": "Whether the real Hermes gateway forwards the OpenAI tools parameter upstream cannot be tested from this sandbox (cluster unreachable). The loop degrades to the previous single-turn behaviour when no tool_calls come back, and every job logs one greppable line 'hermes: tool_calls supported=true|false (mode=... deskMode=... loops=... toolCalls=...)' to settle it from production logs."
   },
