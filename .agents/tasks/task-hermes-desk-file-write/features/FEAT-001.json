@@ -23,5 +23,5 @@
     "cd /projects/sandbox/assisted-teacher/backend && go test ./... -v"
   ],
   "blocked_reason": null,
-  "findings": "All 5 existing + 2 new Hermes tests pass. Full backend test suite passes. The workDir parameter is passed from main.go so mode Desk writes files while mode Lya (empty workDir) silently skips. No frontend changes needed."
+  "findings": "All 5 existing + 3 new Hermes tests pass (including TestHermesBridge_FileWrite_LyaMode). Mode is now threaded through to callHermesStream and file writes are gated on mode==\"desk\". Lya mode never writes files even if Hermes emits write_file tool events. The tool progress event is still forwarded so the frontend can display it."
 }
