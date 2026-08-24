@@ -2,7 +2,7 @@
   "id": "FEAT-003",
   "type": "feat",
   "description": "Add backend ProgrammeHandler tests - currently at 0% coverage. Test GetProgramme and ListProgrammes with temp directory and sample JSON files.",
-  "status": "pending",
+  "status": "in_progress",
   "steps": [
     "Create backend/internal/api/programme_test.go following the exact patterns in files_test.go (httptest.NewRequest, httptest.NewRecorder, t.TempDir).",
     "Add a helper setupProgrammeDir(t) that creates a temp dir with seconde.json, premiere.json, terminale.json containing minimal valid JSON programme data.",
