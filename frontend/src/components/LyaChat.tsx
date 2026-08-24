@@ -2,18 +2,13 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { AuthWebSocket, handleAuthExpired } from '../api'
 import { useI18n } from '../i18n'
+import { normalizeTool, toolLabel } from '../tools'
 
 interface ChatMessage {
   id: string
-  role: 'user' | 'assistant' | 'tool'
+  role: 'user' | 'assistant'
   content: string
   isStreaming?: boolean
-}
-
-interface ToolEvent {
-  name: string
-  status?: string
-  path?: string
 }
 
 interface StreamEvent {
@@ -24,7 +19,7 @@ interface StreamEvent {
   error?: string
   detail?: string
   jobId?: string
-  tool?: ToolEvent
+  tool?: unknown // shape is not guaranteed by Hermes — see tools.ts
 }
 
 /**
@@ -62,6 +57,8 @@ export default function LyaChat({ userName, messages: externalMessages, onMessag
   const [isLoading, setIsLoading] = useState(false)
   const [connected, setConnected] = useState(false)
   const [authError, setAuthError] = useState(false)
+  // Transient "Lya is using a tool" line. Not part of the conversation.
+  const [toolStatus, setToolStatus] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const currentJobId = useRef<string | null>(null)
   const wsRef = useRef<AuthWebSocket | null>(null)
@@ -70,24 +67,13 @@ export default function LyaChat({ userName, messages: externalMessages, onMessag
     switch (ev.type) {
       case 'meta':
         currentJobId.current = ev.jobId || null
+        setToolStatus('')
         break
 
+      // Lya is a pure conversation — tool activity is progress, not content.
+      // Shown in a transient line, never appended to the thread.
       case 'tool':
-        if (ev.tool) {
-          const { name, path } = ev.tool
-          let toolText = ''
-          if (name === 'read' && path) {
-            toolText = t('piChat.toolRead', { path })
-          } else if ((name === 'write' || name === 'edit') && path) {
-            toolText = t('piChat.toolWrite', { path })
-          } else {
-            toolText = t('piChat.toolOther', { name: name || '?' })
-          }
-          setMessages((prev) => [
-            ...prev,
-            { id: `tool-${Date.now()}-${Math.random()}`, role: 'tool', content: toolText },
-          ])
-        }
+        if (ev.tool) setToolStatus(toolLabel(normalizeTool(ev.tool), t))
         break
 
       case 'delta':
@@ -123,6 +109,7 @@ export default function LyaChat({ userName, messages: externalMessages, onMessag
           return prev
         })
         setIsLoading(false)
+        setToolStatus('')
         currentJobId.current = null
         break
 
@@ -143,6 +130,7 @@ export default function LyaChat({ userName, messages: externalMessages, onMessag
           })
         }
         setIsLoading(false)
+        setToolStatus('')
         currentJobId.current = null
         break
     }
@@ -169,6 +157,7 @@ export default function LyaChat({ userName, messages: externalMessages, onMessag
             return prev
           })
           setIsLoading(false)
+          setToolStatus('')
         }
       },
       onReconnect: () => {
@@ -244,11 +233,7 @@ export default function LyaChat({ userName, messages: externalMessages, onMessag
         )}
         {messages.map((msg) => (
           <div key={msg.id} className={`lya-message ${msg.role}`}>
-            {msg.role === 'tool' ? (
-              <span className="chat-tool-event">{msg.content}</span>
-            ) : (
-              <ReactMarkdown>{msg.content}</ReactMarkdown>
-            )}
+            <ReactMarkdown>{msg.content}</ReactMarkdown>
             {msg.role === 'assistant' && !msg.isStreaming && (
               <div className="lya-message-actions">
                 <button onClick={() => navigator.clipboard.writeText(msg.content)}>
@@ -261,6 +246,7 @@ export default function LyaChat({ userName, messages: externalMessages, onMessag
             )}
           </div>
         ))}
+        {toolStatus && <div className="chat-tool-status">{toolStatus}</div>}
         <div ref={messagesEndRef} />
       </div>
 

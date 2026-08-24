@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { AuthWebSocket, handleAuthExpired } from '../api'
 import { useI18n } from '../i18n'
+import { normalizeTool, isFileOp, toolLabel } from '../tools'
 
 interface ChatMessage {
   id: string
@@ -9,12 +10,6 @@ interface ChatMessage {
   content: string
   isStreaming?: boolean
   piWroteFiles?: boolean
-}
-
-interface ToolEvent {
-  name: string
-  status?: string
-  path?: string
 }
 
 interface StreamEvent {
@@ -25,7 +20,7 @@ interface StreamEvent {
   error?: string
   detail?: string
   jobId?: string
-  tool?: ToolEvent
+  tool?: unknown // shape is not guaranteed by Hermes — see tools.ts
 }
 
 interface ProgrammeData {
@@ -128,6 +123,8 @@ export default function Chat({ currentFile, onInsert, programme, agent = 'lya', 
   const [isLoading, setIsLoading] = useState(false)
   const [connected, setConnected] = useState(false)
   const [authError, setAuthError] = useState(false)
+  // Transient "Hermes is using a tool" line. Not part of the conversation.
+  const [toolStatus, setToolStatus] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const currentJobId = useRef<string | null>(null)
   const wsRef = useRef<AuthWebSocket | null>(null)
@@ -143,36 +140,37 @@ export default function Chat({ currentFile, onInsert, programme, agent = 'lya', 
       case 'meta':
         currentJobId.current = ev.jobId || null
         jobWroteFiles.current = false
+        setToolStatus('')
         break
 
-      case 'tool':
-        if (ev.tool) {
-          const { name, path, status } = ev.tool
-          // file_changed is a synthetic event from pi bridge
-          if (name === 'file_changed' && path && onFileChanged) {
-            onFileChanged(path)
-          }
-          // Track writes
-          if ((name === 'write' || name === 'edit') && status === 'done') {
-            jobWroteFiles.current = true
-          }
-          // Show tool progress as a message
-          if (name !== 'file_changed') {
-            let toolText = ''
-            if (name === 'read' && path) {
-              toolText = t('piChat.toolRead', { path })
-            } else if ((name === 'write' || name === 'edit') && path) {
-              toolText = t('piChat.toolWrite', { path })
-            } else {
-              toolText = t('piChat.toolOther', { name })
-            }
-            setMessages((prev) => [
-              ...prev,
-              { id: `tool-${Date.now()}-${Math.random()}`, role: 'tool', content: toolText },
-            ])
-          }
+      case 'tool': {
+        if (!ev.tool) break
+        const tool = normalizeTool(ev.tool)
+
+        // file_changed is a synthetic event from the pi bridge, not a display event.
+        if (tool.name === 'file_changed') {
+          if (tool.path && onFileChanged) onFileChanged(tool.path)
+          break
+        }
+
+        if ((tool.name === 'write' || tool.name === 'edit') && tool.status === 'done') {
+          jobWroteFiles.current = true
+        }
+
+        // File operations are an audit trail worth keeping in the thread.
+        // Everything else is Hermes working out loud: show it in a transient
+        // status line so it does not accumulate in the conversation.
+        if (isFileOp(tool)) {
+          const toolText = toolLabel(tool, t)
+          setMessages((prev) => [
+            ...prev,
+            { id: `tool-${Date.now()}-${Math.random()}`, role: 'tool', content: toolText },
+          ])
+        } else {
+          setToolStatus(toolLabel(tool, t))
         }
         break
+      }
 
       case 'delta':
         if (ev.text) {
@@ -227,6 +225,7 @@ export default function Chat({ currentFile, onInsert, programme, agent = 'lya', 
           return prev
         })
         setIsLoading(false)
+        setToolStatus('')
         currentJobId.current = null
         break
 
@@ -272,6 +271,7 @@ export default function Chat({ currentFile, onInsert, programme, agent = 'lya', 
           })
         }
         setIsLoading(false)
+        setToolStatus('')
         currentJobId.current = null
         break
     }
@@ -315,6 +315,7 @@ export default function Chat({ currentFile, onInsert, programme, agent = 'lya', 
             return prev
           })
           setIsLoading(false)
+          setToolStatus('')
         }
       },
       onReconnect: () => {
@@ -439,6 +440,7 @@ export default function Chat({ currentFile, onInsert, programme, agent = 'lya', 
             )}
           </div>
         ))}
+        {toolStatus && <div className="chat-tool-status">{toolStatus}</div>}
         <div ref={messagesEndRef} />
       </div>
       <div className="chat-input">

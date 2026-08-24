@@ -636,6 +636,16 @@ body {
   border: none;
 }
 
+/* Transient tool-progress line. Replaced on each tool event and cleared when
+   the turn ends, so tool activity never accumulates in the conversation. */
+.chat-tool-status {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 4px 12px;
+  opacity: 0.85;
+}
+
 .chat-pi-updated {
   font-size: 12px;
   color: #2e7d32;

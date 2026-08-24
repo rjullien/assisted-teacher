@@ -102,6 +102,7 @@
     "updated": "Fichier mis à jour par Pi.",
     "toolRead": "📄 Lecture de {path}",
     "toolWrite": "✏️ Écriture de {path}",
-    "toolOther": "🔧 {name}"
+    "toolOther": "🔧 {name}",
+    "toolUnknown": "🔧 outil…"
   }
 }
