@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -173,8 +174,12 @@ type HermesBridge struct {
 	// paths her tool-progress frames report before those paths are jailed into
 	// workDir. See stripHermesFSPrefix.
 	fsPrefixes []string
-	hub        *Hub
-	upgrader   websocket.Upgrader
+	// traceEvents logs every SSE frame received from Hermes, raw. Off by default,
+	// turned on for one deployment when the shape of her frames has to be
+	// established rather than assumed. See hermesTraceEventsEnv.
+	traceEvents bool
+	hub         *Hub
+	upgrader    websocket.Upgrader
 }
 
 func NewHermesBridge(hermesURL, apiKey, workDir string) *HermesBridge {
@@ -185,14 +190,16 @@ func NewHermesBridge(hermesURL, apiKey, workDir string) *HermesBridge {
 		log.Printf("hermes: API key had %d surrounding whitespace byte(s) — trimmed", len(apiKey)-len(key))
 	}
 	prefixes := parseHermesFSPrefixes(os.Getenv(hermesFSPrefixesEnv))
-	log.Printf("hermes: bridge configured (url=%s, keyLen=%d, keyFp=%s, workDir=%s, fsPrefixes=%s)",
-		hermesURL, len(key), keyFingerprint(key), workDir, strings.Join(prefixes, ","))
+	trace := parseHermesTraceEvents(os.Getenv(hermesTraceEventsEnv))
+	log.Printf("hermes: bridge configured (url=%s, keyLen=%d, keyFp=%s, workDir=%s, fsPrefixes=%s, traceEvents=%t)",
+		hermesURL, len(key), keyFingerprint(key), workDir, strings.Join(prefixes, ","), trace)
 	return &HermesBridge{
-		hermesURL:  strings.TrimRight(strings.TrimSpace(hermesURL), "/"),
-		apiKey:     key,
-		workDir:    workDir,
-		fsPrefixes: prefixes,
-		hub:        NewHub(),
+		hermesURL:   strings.TrimRight(strings.TrimSpace(hermesURL), "/"),
+		apiKey:      key,
+		workDir:     workDir,
+		fsPrefixes:  prefixes,
+		traceEvents: trace,
+		hub:         NewHub(),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
@@ -271,6 +278,161 @@ func (b *HermesBridge) stripHermesFSPrefix(path string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// --- SSE observability ---
+//
+// Three releases in a row tried to fix "Lya says she wrote the file and nothing
+// changes" against an ASSUMED tool-frame shape, because nobody had ever seen a
+// real one. What follows does not guess: it makes the frames Hermes actually
+// sends visible in `kubectl logs`, so the next fix can be based on evidence.
+// See README, section « Diagnostiquer les écritures de Lya ».
+
+// hermesToolProgressEvent is the ONE event name the bridge acts upon today. The
+// instrumentation deliberately counts and names every OTHER event too: if Lya
+// reports her writes under another name, this constant is the bug and the logs
+// are the only place that can say so.
+const hermesToolProgressEvent = "hermes.tool.progress"
+
+// hermesTraceEventsEnv turns on raw logging of every SSE frame received from
+// Hermes. Off by default: a traced job logs the teacher's course content, which
+// is not something to keep in the cluster logs permanently.
+const hermesTraceEventsEnv = "HERMES_TRACE_EVENTS"
+
+const (
+	// hermesTraceMaxDataChars caps a traced `data:` payload. A write frame can
+	// carry a whole course file; the shape of the frame (its keys) is what the
+	// trace exists to reveal, and that is visible in the first characters.
+	hermesTraceMaxDataChars = 2000
+	// maxTracedEventNames bounds the distinct event names reported in the
+	// always-on per-job summary, so a chatty gateway cannot turn one log line into
+	// an unbounded one. Names beyond the cap are counted, not dropped silently.
+	maxTracedEventNames = 5
+	// maxLoggedPayloadKeys bounds the key list of a tool frame in the same way.
+	maxLoggedPayloadKeys = 12
+)
+
+// traceNoEventName marks a frame that arrived without an `event:` line, i.e. the
+// normal chat.completion.chunk path.
+const traceNoEventName = "<none>"
+
+// parseHermesTraceEvents reads the trace flag. An unrecognised value is reported
+// and leaves tracing off: an operator who typed HERMES_TRACE_EVENTS=yes-please
+// must not conclude from a silent boot that the trace is running.
+func parseHermesTraceEvents(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "false", "0", "no", "off":
+		return false
+	case "true", "1", "yes", "on":
+		return true
+	default:
+		log.Printf("hermes: ignoring %s=%q — expected true or false, SSE tracing stays off", hermesTraceEventsEnv, raw)
+		return false
+	}
+}
+
+// sseObservation counts what the SSE streams of ONE job actually contained.
+//
+// It exists because of a hole in the previous diagnostic: a tool frame that was
+// received and rejected logged a line, but a tool frame that never arrived
+// logged nothing at all — and from outside the pod those two cases were
+// indistinguishable. Both are now in the per-job summary, always on.
+type sseObservation struct {
+	// eventFrames counts data frames carrying a non-empty `event:` name.
+	eventFrames int
+	// toolProgressFrames counts those under hermesToolProgressEvent.
+	toolProgressFrames int
+	// chunkFrames counts data frames with no event name (the text deltas of
+	// chat.completion.chunk), which the trace does not log one by one.
+	chunkFrames int
+	// eventNames are the distinct event names seen, in order of first appearance,
+	// capped at maxTracedEventNames.
+	eventNames []string
+	// extraEventNames counts the DISTINCT names that did not fit the cap.
+	extraEventNames int
+	seen            map[string]bool
+}
+
+// noteEventFrame records one frame that arrived under an `event:` name.
+func (o *sseObservation) noteEventFrame(name string) {
+	o.eventFrames++
+	if name == hermesToolProgressEvent {
+		o.toolProgressFrames++
+	}
+	if o.seen == nil {
+		o.seen = map[string]bool{}
+	}
+	if o.seen[name] {
+		return
+	}
+	o.seen[name] = true
+	if len(o.eventNames) >= maxTracedEventNames {
+		o.extraEventNames++
+		return
+	}
+	o.eventNames = append(o.eventNames, name)
+}
+
+// summary is the always-on report appended to the per-job diagnostic line.
+//
+// sseEventFrames=0 means no event-named frame reached the bridge at all: no tool
+// frame was sent, whatever we would have done with it. toolProgressFrames counts
+// only the name the bridge acts upon, so a mismatch between the two says "she
+// reported tool activity under another name" and prints that name.
+func (o *sseObservation) summary() string {
+	names := append([]string(nil), o.eventNames...)
+	if o.extraEventNames > 0 {
+		names = append(names, fmt.Sprintf("+%d", o.extraEventNames))
+	}
+	return fmt.Sprintf("sseEventFrames=%d sseEventNames=[%s] toolProgressFrames=%d sseChunkFrames=%d",
+		o.eventFrames, strings.Join(names, ","), o.toolProgressFrames, o.chunkFrames)
+}
+
+// traceFrame logs one raw SSE frame, gated on HERMES_TRACE_EVENTS.
+//
+// Privacy: a frame payload carries the teacher's course content, never a
+// credential — the Bearer token lives in the REQUEST header, which is never
+// logged, and anything key-related goes through keyFingerprint.
+func (b *HermesBridge) traceFrame(eventName, data string) {
+	if !b.traceEvents {
+		return
+	}
+	name := eventName
+	if name == "" {
+		name = traceNoEventName
+	}
+	log.Printf("hermes_trace: event=%s data=%s", name, truncateTraceData(data))
+}
+
+// truncateTraceData cuts a traced payload at hermesTraceMaxDataChars and says so.
+//
+// Runes, not bytes: cutting mid-UTF-8 would put a broken accented character in
+// the logs, and the payloads are French course text.
+func truncateTraceData(data string) string {
+	runes := []rune(data)
+	if len(runes) <= hermesTraceMaxDataChars {
+		return data
+	}
+	return fmt.Sprintf("%s…[truncated: %d of %d chars]",
+		string(runes[:hermesTraceMaxDataChars]), hermesTraceMaxDataChars, len(runes))
+}
+
+// payloadKeys lists the top-level keys of a tool frame, sorted and bounded.
+//
+// Keys ONLY, never values: this line is always on, and the value of "content" is
+// the teacher's whole file. The keys are exactly what is needed to see that a
+// frame carries, say, "arguments" where we look for "args".
+func payloadKeys(payload map[string]interface{}) string {
+	keys := make([]string, 0, len(payload))
+	for k := range payload {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // stable line: map iteration order would change every run
+	if len(keys) > maxLoggedPayloadKeys {
+		extra := len(keys) - maxLoggedPayloadKeys
+		keys = append(keys[:maxLoggedPayloadKeys:maxLoggedPayloadKeys], fmt.Sprintf("+%d", extra))
+	}
+	return "[" + strings.Join(keys, ",") + "]"
 }
 
 // safePath validates and resolves a relative path within the workspace.
@@ -624,12 +786,48 @@ func (b *HermesBridge) execFileTool(name, rawArgs string) (string, string, error
 }
 
 // writeToolNames lists tool names that represent a file-write operation.
+//
+// This allowlist is an ASSUMPTION about how Lya names her own tools, and it has
+// never been checked against a real frame. Do NOT add names to it on a hunch:
+// turn HERMES_TRACE_EVENTS on, read the name in the logs, then add the one that
+// is really used. That is what the "is not a known write tool" line below is for.
 var writeToolNames = map[string]bool{
 	"write":       true,
 	"write_file":  true,
 	"create_file": true,
 	"edit":        true,
 	"edit_file":   true,
+}
+
+// knownWriteToolNames renders writeToolNames for the rejection log, sorted so the
+// line is identical from one run to the next (map order is randomised).
+func knownWriteToolNames() string {
+	names := make([]string, 0, len(writeToolNames))
+	for name := range writeToolNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
+}
+
+// firstStr returns the first non-empty string value among keys.
+func firstStr(m map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if v := strFromMap(m, key); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// firstArgsStr is firstStr on the nested "args" map.
+func firstArgsStr(m map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if v := strFromArgs(m, key); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // writeMirrorResult is what a tool-progress frame did to the workspace.
@@ -652,63 +850,62 @@ type writeMirrorResult struct {
 //
 // Lya's own tools write to HER filesystem (see stripHermesFSPrefix), so this is
 // the only path by which such a write reaches the teacher's workspace.
+//
+// EVERY exit of this function logs why. Four of them used to `return ""`
+// silently, and that is precisely what hid the bug across v1.9.0, v1.10.0 and
+// v1.10.1: a frame whose name, status or keys differed from what this code
+// assumes produced no mirroring AND no trace, so production logs could not tell
+// it apart from a frame that was never sent.
 func (b *HermesBridge) handleToolFileWrite(payload map[string]interface{}) writeMirrorResult {
+	// Extract everything BEFORE deciding anything: the facts line below must report
+	// what a frame carried even when the very first guard rejects it.
+	// Same keys as frontend/src/tools.ts.
+	name := firstStr(payload, "name", "tool", "toolName", "label")
+	status := firstStr(payload, "status", "state")
+	path := firstStr(payload, "path", "file")
+	if path == "" {
+		path = firstArgsStr(payload, "path", "file")
+	}
+	content := firstStr(payload, "content", "output", "result")
+	if content == "" {
+		content = firstArgsStr(payload, "content")
+	}
+
+	// One always-on line per tool frame: did a name, a path and a content come out
+	// of it, and which keys did the frame really have. Values are not logged here
+	// (payloadKeys is keys-only) — the raw payload is HERMES_TRACE_EVENTS' job.
+	log.Printf("hermes: tool frame seen (name=%q status=%q pathFound=%t contentFound=%t keys=%s)",
+		name, status, path != "", content != "", payloadKeys(payload))
+
 	if b.workDir == "" {
+		log.Printf("hermes: tool frame not mirrored (no workspace configured, WORKSPACE_DIR is empty): tool name %q", name)
 		return writeMirrorResult{}
 	}
-
-	// Normalize tool name (same keys as frontend/src/tools.ts)
-	name := strFromMap(payload, "name")
-	if name == "" {
-		name = strFromMap(payload, "tool")
-	}
-	if name == "" {
-		name = strFromMap(payload, "toolName")
-	}
-	if name == "" {
-		name = strFromMap(payload, "label")
-	}
-
 	if !writeToolNames[name] {
+		// The most likely cause of the production symptom: she writes through a tool
+		// we do not recognise (a shell, an "apply_patch", an unnamed frame). The name
+		// SEEN is in the line, so the fix is a one-word evidence-based change.
+		log.Printf("hermes: tool frame not mirrored (tool name %q is not a known write tool, known: %s)",
+			name, knownWriteToolNames())
 		return writeMirrorResult{}
-	}
-
-	// Check status is "done"
-	status := strFromMap(payload, "status")
-	if status == "" {
-		status = strFromMap(payload, "state")
 	}
 	if status != "done" {
+		// Includes the empty status of a frame that reports no state at all: that is
+		// a different problem from a running frame, and %q shows which one it is.
+		log.Printf("hermes: tool frame not mirrored (write tool %q reported status %q, not \"done\")", name, status)
 		return writeMirrorResult{}
 	}
-
-	// Normalize path
-	path := strFromMap(payload, "path")
 	if path == "" {
-		path = strFromMap(payload, "file")
-	}
-	if path == "" {
-		path = strFromArgs(payload, "path")
-	}
-	if path == "" {
-		path = strFromArgs(payload, "file")
-	}
-	if path == "" {
+		log.Printf("hermes: tool frame not mirrored (write tool %q reported no path, keys seen: %s)",
+			name, payloadKeys(payload))
 		return writeMirrorResult{}
 	}
-
-	// Normalize content
-	content := strFromMap(payload, "content")
 	if content == "" {
-		content = strFromMap(payload, "output")
-	}
-	if content == "" {
-		content = strFromMap(payload, "result")
-	}
-	if content == "" {
-		content = strFromArgs(payload, "content")
-	}
-	if content == "" {
+		// A write tool that reports no content is plausible (some report only a
+		// summary), and it means the mirroring CANNOT work as designed: the file
+		// content only exists on Lya's disk. Loudly, then.
+		log.Printf("hermes: tool frame not mirrored (write tool %q reported no content for path %q, keys seen: %s)",
+			name, path, payloadKeys(payload))
 		return writeMirrorResult{}
 	}
 
@@ -951,6 +1148,9 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 		// workspace, and those we refused. See writeMirrorResult.
 		mirroredWrites int
 		skippedWrites  int
+		// What the SSE streams of this job actually carried, across every turn.
+		// One observation for the whole job, passed by pointer to streamTurn.
+		sse sseObservation
 	)
 	// deskMode is part of the line so 'no tool calls because Hermes ignores the
 	// tools parameter' cannot be confused with 'no tool calls because the teacher
@@ -961,9 +1161,15 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 	// and the logs could not say whether anything reached the workspace.
 	// supported=false with mirroredWrites>0 is the normal shape today: she ignores
 	// the declared tools and uses her own.
+	//
+	// sse.summary() answers what the counters above still could not:
+	// mirroredWrites=0 skippedWrites=0 used to mean either "no tool frame was ever
+	// sent" or "one arrived and a guard of handleToolFileWrite rejected it".
+	// toolProgressFrames and the distinct event names separate the two, always on,
+	// without needing HERMES_TRACE_EVENTS.
 	defer func() {
-		log.Printf("hermes: tool_calls supported=%t (mode=%s deskMode=%s loops=%d toolCalls=%d mirroredWrites=%d skippedWrites=%d)",
-			sawToolCalls, mode, deskMode, loops, toolCallCount, mirroredWrites, skippedWrites)
+		log.Printf("hermes: tool_calls supported=%t (mode=%s deskMode=%s loops=%d toolCalls=%d mirroredWrites=%d skippedWrites=%d %s)",
+			sawToolCalls, mode, deskMode, loops, toolCallCount, mirroredWrites, skippedWrites, sse.summary())
 	}()
 
 	for loops = 1; loops <= maxToolLoops; loops++ {
@@ -982,7 +1188,7 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 		if err != nil {
 			return err
 		}
-		turn, err := b.streamTurn(job, resp.Body, mode, deskMode, &full)
+		turn, err := b.streamTurn(job, resp.Body, mode, deskMode, &full, &sse)
 		resp.Body.Close()
 		// Counted before any early return: a turn that mirrored a write and then
 		// failed still changed the teacher's workspace.
@@ -1327,9 +1533,13 @@ type turnResult struct {
 // frames exactly as before, accumulates the turn text into full (the whole job's
 // reply) and collects any tool_calls for the caller to execute.
 //
+// sse accumulates, across every turn of the job, what the streams really
+// contained (see sseObservation): every event name seen, not only the one the
+// bridge acts upon.
+//
 // data: [DONE] ends the TURN, not necessarily the job: the done event is emitted
 // by callHermesStream only once a turn came back without tool calls.
-func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode, deskMode string, full *strings.Builder) (turnResult, error) {
+func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode, deskMode string, full *strings.Builder, sse *sseObservation) (turnResult, error) {
 	var res turnResult
 
 	scanner := bufio.NewScanner(body)
@@ -1337,6 +1547,10 @@ func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode, deskMode strin
 
 	var turnText strings.Builder
 	var eventName string
+	// Text deltas arrive by the hundred: tracing them all would bury every other
+	// frame, which is the one thing this instrumentation must not do. The first of
+	// the turn is traced (the normal path stays visible), the rest are counted.
+	var turnChunkFrames int
 	// Tool-call deltas are addressed by index, and indexes may arrive interleaved.
 	byIndex := map[int]*toolCallAccum{}
 	var order []int
@@ -1359,13 +1573,33 @@ func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode, deskMode strin
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 
+		// Observe the frame BEFORE interpreting it. Everything below this point is
+		// an assumption about the shape Hermes sends; the counters and the trace are
+		// what make a frame that does not match those assumptions visible instead of
+		// silently ignored.
+		switch {
+		case eventName != "":
+			sse.noteEventFrame(eventName)
+			b.traceFrame(eventName, data)
+		case data == "[DONE]":
+			// Traced: "the stream ended normally" is itself an answer when a job
+			// produced nothing.
+			b.traceFrame("", data)
+		default:
+			sse.chunkFrames++
+			turnChunkFrames++
+			if turnChunkFrames == 1 {
+				b.traceFrame("", data)
+			}
+		}
+
 		if data == "[DONE]" {
 			res.sawDone = true
 			break
 		}
 
 		// Handle tool progress events from Hermes
-		if eventName == "hermes.tool.progress" {
+		if eventName == hermesToolProgressEvent {
 			var tool interface{}
 			json.Unmarshal([]byte(data), &tool)
 			job.append(StreamEvent{Type: "tool", Tool: tool})
@@ -1463,6 +1697,12 @@ func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode, deskMode strin
 	}
 	if err := scanner.Err(); err != nil {
 		return res, err
+	}
+	if b.traceEvents {
+		// Closes the trace of the turn: how many text-delta frames were counted but
+		// not logged, and whether the stream really reached data: [DONE].
+		log.Printf("hermes_trace: turn ended (chunkFrames=%d, only the first is logged in full; sawDone=%t)",
+			turnChunkFrames, res.sawDone)
 	}
 
 	res.text = turnText.String()

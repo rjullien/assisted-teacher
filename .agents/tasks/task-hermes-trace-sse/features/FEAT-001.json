@@ -1,0 +1,31 @@
+{
+  "id": "FEAT-001",
+  "type": "fix",
+  "description": "Make the SSE frames Hermes really sends observable, so the next mirroring fix is evidence-based: opt-in raw frame trace, always-on per-job SSE summary, and a distinct greppable rejection reason for every branch of handleToolFileWrite.",
+  "status": "completed",
+  "steps": [
+    "Add HERMES_TRACE_EVENTS (default off) read in NewHermesBridge, stored on the bridge; log every SSE frame under the prefix hermes_trace: with its event name (or <none>) and its data payload truncated to 2000 runes with an explicit marker. Skip text deltas except the first of each turn, which is traced, and count the rest.",
+    "Add sseObservation: count data frames carrying a non-empty event: name, the distinct names seen (first 5 plus an overflow count), the hermes.tool.progress frames specifically and the text-delta frames. One observation per job, threaded into streamTurn, appended to the existing per-job diagnostic line so it stays a single greppable line.",
+    "Rewrite handleToolFileWrite so extraction happens before the guards, log one always-on facts line per tool frame (name, status, pathFound, contentFound, keys) and give each guard its own reason line naming the tool as seen: unknown/empty tool name, status not done, missing path, missing content. Remove every silent return.",
+    "Document the flag in .env.example and put the exact kubectl logs | grep commands in the README, including the ArgoCD selfHeal caveat (kubectl set env is reverted, the variable belongs in vps-infra).",
+    "Add scripts/capture-hermes-frames.sh to capture raw frames straight from Hermes when the backend is not the thing under observation.",
+    "Extend backend/internal/bridge/hermes_test.go and verify by mutation."
+  ],
+  "acceptance_criteria": [
+    "With HERMES_TRACE_EVENTS=true an event frame is logged with its name and payload; with the flag absent nothing prefixed hermes_trace: is logged",
+    "A frame under an unexpected event name is counted and its name appears in the per-job summary",
+    "Each rejection branch of handleToolFileWrite logs its own distinct line including the tool name seen",
+    "The summary reports zero tool frames when none arrived, and that case is distinguishable from a frame that arrived and was rejected",
+    "A payload longer than 2000 characters is truncated with a marker and its tail never reaches the logs",
+    "Mode Lya still declares no tools and mirrors nothing: TestHermesBridge_FileWrite_LyaMode and TestHermesBridge_ToolLoop_LyaModeDeclaresNoTools stay green",
+    "backend/internal/bridge/pi.go, frontend/src/components/LyaChat.tsx and version.json unchanged",
+    "No tool name added to writeToolNames, no prompt change, no behavioural fix attempt"
+  ],
+  "verification": [
+    "cd backend && go build ./... && go vet ./... && gofmt -l . && go test ./... -count=1 -timeout=90s",
+    "cd frontend && npx vitest --run && npm run build",
+    "git diff --stat main -- backend/internal/bridge/pi.go frontend/src/components/LyaChat.tsx version.json (empty)"
+  ],
+  "blocked_reason": null,
+  "findings": "16 new backend tests (hermes_test.go), all green, plus the 3 backend packages and the untouched frontend suite. New public surface: HERMES_TRACE_EVENTS (parseHermesTraceEvents accepts true/1/yes/on and reports an unrecognised value instead of silently staying off), hermesTraceMaxDataChars = 2000, maxTracedEventNames = 5, maxLoggedPayloadKeys = 12, hermesToolProgressEvent, sseObservation.summary() = 'sseEventFrames=N sseEventNames=[…] toolProgressFrames=N sseChunkFrames=N' appended INSIDE the existing 'hermes: tool_calls supported=…' parentheses so the older assertions on 'mirroredWrites=%d skippedWrites=%d' still match. handleToolFileWrite keeps its writeMirrorResult contract (skipped still means 'a completed write we refused after the guards'), so no existing counter changed meaning. payloadKeys logs keys only, sorted and bounded — never a value, since the 'content' value is the teacher's file and that line is always on. Privacy: the trace only ever sees frame payloads; the Bearer token lives in the request header and anything key-related still goes through keyFingerprint. Mode Lya is untouched: the frame is counted (tracing is deliberately mode-independent) but handleToolFileWrite is never reached, asserted by the absence of the 'tool frame seen' line and by an empty workspace. MUTATION VERIFICATION (15 mutants, each proven applied by asserting the anchor occurred exactly once and that the file content changed, then restored from a backup outside the repo; all 15 KILLED): M1 trace guard removed -> Trace_OffByDefault; M2 unrecognised flag value returns true -> ParseHermesTraceEvents; M3 sse.noteEventFrame call dropped -> 6 tests; M4 toolProgressFrames incremented for every event name -> Trace_UnexpectedEventName + SSEObservationSummary; M5 truncateTraceData never truncates -> TruncateTraceData + Trace_PayloadTruncated; M6/M7/M8/M9 each rejection log line removed -> ToolFrame_RejectionReasonsAreDistinct (M6 also Summary_RejectedFrameDiffersFromNoFrame); M10 payload key list unbounded -> PayloadKeys; M11 overflow names not counted -> SSEObservationSummary; M12 facts line removed -> ToolFrame_FactsAreReported + Trace_OffByDefault; M13 chunk frames not counted -> Summary_NoToolFrameAtAll; M14 legacyWritesEnabled loses the mode!=desk check -> FileWrite_LyaMode, FileToolGates, MirrorWrite_LyaModeAbsolutePath, Trace_LyaModeStillMirrorsNothing; M15 summary dropped from the diagnostic line -> 6 tests. Not verified against real Hermes and nothing in the code or docs claims otherwise."
+}

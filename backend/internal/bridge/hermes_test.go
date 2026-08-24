@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 )
@@ -2397,5 +2398,489 @@ func TestParseHermesFSPrefixes(t *testing.T) {
 	}
 	if got := parseHermesFSPrefixes("opt/data/"); len(got) != 2 || got[0] != "/opt/data/home/" {
 		t.Errorf("a list with nothing usable must fall back to the defaults, got %v", got)
+	}
+}
+
+// --- SSE instrumentation (HERMES_TRACE_EVENTS + always-on per-job summary) ---
+//
+// Why this exists: v1.9.0 (write interception), v1.10.0 (declared tools) and
+// v1.10.1 (Hermes-side path mapping) were all written against an ASSUMED
+// tool-frame shape, and all three failed in production the same way — Lya says
+// "c'est fait", nothing appears in the workspace, and the logs cannot say whether
+// a tool frame ever arrived. These tests cover the instrumentation that makes the
+// next fix evidence-based, not a fourth guess.
+
+// mockHermesEventServer streams ONE SSE frame under eventName carrying payload,
+// then data: [DONE].
+//
+// Unlike mockHermesFileWriteServer it fixes neither the event name nor the
+// payload keys: that is what lets a test describe a frame whose shape the bridge
+// does NOT expect, which is the case production keeps hitting.
+func mockHermesEventServer(eventName string, payload map[string]interface{}) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			http.Error(w, "unauthorized", 401)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		flusher, _ := w.(http.Flusher)
+		data, _ := json.Marshal(payload)
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventName, string(data))
+		flusher.Flush()
+		time.Sleep(10 * time.Millisecond)
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+	}))
+}
+
+// runFrameJob drives one job whose Hermes answer is a single frame under
+// eventName, and returns the captured log plus the events.
+func runFrameJob(t *testing.T, tmpDir, eventName, mode string, payload map[string]interface{}) (string, []StreamEvent) {
+	t.Helper()
+	hermes := mockHermesEventServer(eventName, payload)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	var events []StreamEvent
+	logged := captureLog(t, func() {
+		events = runHermesJob(t, b, "Ajoute une ligne dans Test_folders/test_nvx_cours.md", mode)
+	})
+	return logged, events
+}
+
+// captureLogSync redirects the standard logger while fn runs and returns what was
+// written. Unlike captureLog it waits for nothing, so it is for code that logs
+// synchronously (a parser), not for a job goroutine.
+func captureLogSync(t *testing.T, fn func()) string {
+	t.Helper()
+	sink := &syncBuffer{}
+	prevWriter, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(sink)
+	log.SetFlags(0)
+	defer func() {
+		log.SetOutput(prevWriter)
+		log.SetFlags(prevFlags)
+	}()
+	fn()
+	return sink.String()
+}
+
+// writeFramePayload is the shape v1.9.0 assumed and the only one that mirrors
+// today: it is used as the baseline the rejection cases deviate from.
+func writeFramePayload() map[string]interface{} {
+	return map[string]interface{}{
+		"name":    "write_file",
+		"path":    "/opt/data/Test_folders/test_nvx_cours.md",
+		"content": "# Test\n\nLigne ajoutée pour tester l'écriture dans le fichier.",
+		"status":  "done",
+	}
+}
+
+// TestHermesTraceEnvVarName: the flag name is a contract with .env.example and
+// with the README command an operator copies into a terminal.
+func TestHermesTraceEnvVarName(t *testing.T) {
+	if hermesTraceEventsEnv != "HERMES_TRACE_EVENTS" {
+		t.Errorf("the documented flag is HERMES_TRACE_EVENTS, got %q — .env.example and the README point at the old name", hermesTraceEventsEnv)
+	}
+	if hermesToolProgressEvent != "hermes.tool.progress" {
+		t.Errorf("expected the acted-upon event name to stay hermes.tool.progress, got %q", hermesToolProgressEvent)
+	}
+}
+
+func TestParseHermesTraceEvents(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want bool
+	}{
+		{"true", true},
+		{"TRUE", true},
+		{" true ", true},
+		{"1", true},
+		{"yes", true},
+		{"on", true},
+		{"", false},
+		{"false", false},
+		{"0", false},
+		{"off", false},
+	} {
+		if got := parseHermesTraceEvents(tc.raw); got != tc.want {
+			t.Errorf("parseHermesTraceEvents(%q) = %t, want %t", tc.raw, got, tc.want)
+		}
+	}
+	// An unrecognised value must not switch tracing on AND must not be silent: an
+	// operator who mistyped it would otherwise wait for frames that never come.
+	var got bool
+	logged := captureLogSync(t, func() { got = parseHermesTraceEvents("yes-please") })
+	if got {
+		t.Error("an unrecognised value must leave tracing off")
+	}
+	if !strings.Contains(logged, `hermes: ignoring HERMES_TRACE_EVENTS="yes-please"`) {
+		t.Errorf("expected the ignored value to be reported, got:\n%s", logged)
+	}
+}
+
+// TestHermesBridge_Trace_FrameLoggedWhenEnabled: the raw payload of every frame
+// must be readable in the logs, since its KEYS are what three releases guessed.
+func TestHermesBridge_Trace_FrameLoggedWhenEnabled(t *testing.T) {
+	t.Setenv(hermesTraceEventsEnv, "true")
+
+	logged, _ := runFrameJob(t, t.TempDir(), hermesToolProgressEvent, "desk", writeFramePayload())
+
+	if !strings.Contains(logged, "hermes_trace: event=hermes.tool.progress data=") {
+		t.Errorf("expected the frame traced under its event name, got:\n%s", logged)
+	}
+	// The payload itself, not a summary of it: the path Lya reports is the fact
+	// v1.10.1 was built on.
+	if !strings.Contains(logged, `"path":"/opt/data/Test_folders/test_nvx_cours.md"`) {
+		t.Errorf("expected the raw data payload in the trace, got:\n%s", logged)
+	}
+	// A frame with no event: line is traced as <none>, so "the stream ended" is
+	// visible too — a job that produced nothing at all still leaves a trace.
+	if !strings.Contains(logged, "hermes_trace: event=<none> data=[DONE]") {
+		t.Errorf("expected the [DONE] frame traced with event=<none>, got:\n%s", logged)
+	}
+}
+
+// TestHermesBridge_Trace_OffByDefault: the trace logs the teacher's course
+// content, so it must stay off until an operator asks for it.
+func TestHermesBridge_Trace_OffByDefault(t *testing.T) {
+	t.Setenv(hermesTraceEventsEnv, "")
+
+	logged, _ := runFrameJob(t, t.TempDir(), hermesToolProgressEvent, "desk", writeFramePayload())
+
+	if strings.Contains(logged, "hermes_trace:") {
+		t.Errorf("no frame must be traced without %s, got:\n%s", hermesTraceEventsEnv, logged)
+	}
+	// Not a vacuous assertion: the job DID run and the always-on lines are there.
+	if !strings.Contains(logged, "hermes: tool frame seen (name=\"write_file\"") {
+		t.Errorf("expected the always-on tool frame line, got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "toolProgressFrames=1") {
+		t.Errorf("expected the always-on summary to count the frame, got:\n%s", logged)
+	}
+}
+
+// TestHermesBridge_Trace_UnexpectedEventName: the bridge only ACTS on
+// hermes.tool.progress. If Lya reports her writes under another name, that name
+// is the bug — so it has to be counted and printed, not ignored.
+func TestHermesBridge_Trace_UnexpectedEventName(t *testing.T) {
+	t.Setenv(hermesTraceEventsEnv, "true")
+	tmpDir := t.TempDir()
+
+	logged, events := runFrameJob(t, tmpDir, "lya.file.written", "desk", writeFramePayload())
+
+	assertNoErrorEvent(t, events)
+	if !strings.Contains(logged, "sseEventFrames=1 sseEventNames=[lya.file.written] toolProgressFrames=0") {
+		t.Errorf("expected the unexpected event name counted and reported, got:\n%s", logged)
+	}
+	if !strings.Contains(logged, "hermes_trace: event=lya.file.written data=") {
+		t.Errorf("expected the frame traced under its own name, got:\n%s", logged)
+	}
+	// Behaviour is unchanged: an unknown event name is still not acted upon.
+	if strings.Contains(logged, "hermes: tool frame seen") {
+		t.Errorf("a frame under an unknown event name must not be treated as a tool frame, got:\n%s", logged)
+	}
+	assertWorkspaceEmpty(t, tmpDir)
+}
+
+// TestHermesBridge_Summary_NoToolFrameAtAll: the production case. Lya answered in
+// text, no tool frame was ever sent, and the log must say so with a number
+// instead of leaving the absence invisible.
+func TestHermesBridge_Summary_NoToolFrameAtAll(t *testing.T) {
+	hermes := mockHermesServer() // three text deltas, then [DONE]
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", t.TempDir())
+	logged := captureLog(t, func() {
+		runHermesJob(t, b, "Ajoute une ligne dans Test_folders/test_nvx_cours.md", "desk")
+	})
+
+	if !strings.Contains(logged, "sseEventFrames=0 sseEventNames=[] toolProgressFrames=0 sseChunkFrames=3") {
+		t.Errorf("expected the summary to report zero event frames and the three text deltas, got:\n%s", logged)
+	}
+	if strings.Contains(logged, "hermes: tool frame") {
+		t.Errorf("no tool frame arrived, so no tool frame line must be logged, got:\n%s", logged)
+	}
+}
+
+// TestHermesBridge_Summary_RejectedFrameDiffersFromNoFrame is the heart of this
+// change: "no frame arrived" and "a frame arrived and was rejected" produced the
+// same silence for three releases, and the teacher's symptom is identical in both
+// cases.
+func TestHermesBridge_Summary_RejectedFrameDiffersFromNoFrame(t *testing.T) {
+	noFrame := mockHermesServer()
+	defer noFrame.Close()
+	bNoFrame := NewHermesBridge(noFrame.URL, "test-key", t.TempDir())
+	noFrameLog := captureLog(t, func() {
+		runHermesJob(t, bNoFrame, "Ajoute une ligne", "desk")
+	})
+
+	rejected := writeFramePayload()
+	rejected["status"] = "running"
+	rejectedLog, _ := runFrameJob(t, t.TempDir(), hermesToolProgressEvent, "desk", rejected)
+
+	// Same outcome for the workspace…
+	for _, logged := range []string{noFrameLog, rejectedLog} {
+		if !strings.Contains(logged, "mirroredWrites=0 skippedWrites=0") {
+			t.Errorf("expected no write in either case, got:\n%s", logged)
+		}
+	}
+	// …and now distinguishable causes.
+	if !strings.Contains(noFrameLog, "toolProgressFrames=0") {
+		t.Errorf("expected toolProgressFrames=0 when nothing arrived, got:\n%s", noFrameLog)
+	}
+	if !strings.Contains(rejectedLog, "toolProgressFrames=1") {
+		t.Errorf("expected toolProgressFrames=1 for a frame that arrived, got:\n%s", rejectedLog)
+	}
+	if !strings.Contains(rejectedLog, `reported status "running", not "done"`) {
+		t.Errorf("expected the rejecting guard to be named, got:\n%s", rejectedLog)
+	}
+	if strings.Contains(noFrameLog, "not mirrored") {
+		t.Errorf("nothing arrived, so no guard can have rejected anything, got:\n%s", noFrameLog)
+	}
+}
+
+// TestKnownWriteToolNames pins the allowlist the rejection line advertises. It
+// fails on purpose when a name is added: adding one is only legitimate once a
+// real frame, captured with HERMES_TRACE_EVENTS, has shown that name.
+func TestKnownWriteToolNames(t *testing.T) {
+	if got := knownWriteToolNames(); got != "create_file,edit,edit_file,write,write_file" {
+		t.Errorf("expected the sorted allowlist, got %q", got)
+	}
+}
+
+// TestHermesBridge_ToolFrame_RejectionReasonsAreDistinct: each branch of
+// handleToolFileWrite that refuses to mirror must log its OWN greppable reason,
+// naming the tool as it was seen. Four of these branches used to `return ""` in
+// silence — that silence is what hid the bug across three releases.
+func TestHermesBridge_ToolFrame_RejectionReasonsAreDistinct(t *testing.T) {
+	cases := []struct {
+		label   string
+		payload map[string]interface{}
+		want    string
+	}{
+		{
+			label: "unknown tool name",
+			payload: map[string]interface{}{
+				"name": "bash", "path": "/opt/data/x.md", "content": "# X", "status": "done",
+			},
+			want: `hermes: tool frame not mirrored (tool name "bash" is not a known write tool`,
+		},
+		{
+			label: "no tool name at all",
+			payload: map[string]interface{}{
+				"path": "/opt/data/x.md", "content": "# X", "status": "done",
+			},
+			want: `hermes: tool frame not mirrored (tool name "" is not a known write tool`,
+		},
+		{
+			label: "status not done",
+			payload: map[string]interface{}{
+				"name": "write_file", "path": "/opt/data/x.md", "content": "# X", "status": "running",
+			},
+			want: `hermes: tool frame not mirrored (write tool "write_file" reported status "running", not "done")`,
+		},
+		{
+			label: "missing path",
+			payload: map[string]interface{}{
+				"name": "write_file", "content": "# X", "status": "done",
+			},
+			want: `hermes: tool frame not mirrored (write tool "write_file" reported no path, keys seen: [content,name,status])`,
+		},
+		{
+			label: "missing content",
+			payload: map[string]interface{}{
+				"name": "write_file", "path": "/opt/data/x.md", "status": "done",
+			},
+			want: `hermes: tool frame not mirrored (write tool "write_file" reported no content for path "/opt/data/x.md", keys seen: [name,path,status])`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			logged, events := runFrameJob(t, tmpDir, hermesToolProgressEvent, "desk", tc.payload)
+
+			assertNoErrorEvent(t, events)
+			assertWorkspaceEmpty(t, tmpDir)
+			if !strings.Contains(logged, tc.want) {
+				t.Errorf("expected the reason %q, got:\n%s", tc.want, logged)
+			}
+			// The frame arrived: that fact must be in the always-on summary whatever
+			// the guard that rejected it.
+			if !strings.Contains(logged, "toolProgressFrames=1") {
+				t.Errorf("expected the arrived frame to be counted, got:\n%s", logged)
+			}
+			// Distinct, not interchangeable: one reason per branch.
+			for _, other := range cases {
+				if other.label == tc.label {
+					continue
+				}
+				if strings.Contains(logged, other.want) {
+					t.Errorf("the %q branch also logged the %q reason:\n%s", tc.label, other.label, logged)
+				}
+			}
+		})
+	}
+}
+
+// TestHermesBridge_ToolFrame_FactsAreReported: what was extracted from the frame,
+// on one always-on line, whatever the outcome.
+func TestHermesBridge_ToolFrame_FactsAreReported(t *testing.T) {
+	logged, _ := runFrameJob(t, t.TempDir(), hermesToolProgressEvent, "desk", map[string]interface{}{
+		"name": "bash", "status": "done", "command": "echo hi",
+	})
+
+	want := `hermes: tool frame seen (name="bash" status="done" pathFound=false contentFound=false keys=[command,name,status])`
+	if !strings.Contains(logged, want) {
+		t.Errorf("expected %q, got:\n%s", want, logged)
+	}
+}
+
+func TestPayloadKeys(t *testing.T) {
+	// Keys only, sorted: the value of "content" is the teacher's whole file and
+	// this line is always on.
+	got := payloadKeys(map[string]interface{}{
+		"name":    "write_file",
+		"content": "contenu confidentiel du cours",
+	})
+	if got != "[content,name]" {
+		t.Errorf("expected [content,name], got %q", got)
+	}
+	if strings.Contains(got, "contenu confidentiel") {
+		t.Errorf("payloadKeys must never log a value, got %q", got)
+	}
+
+	// Bounded: 14 keys k01…k14 give the first 12 plus a count of the rest.
+	many := map[string]interface{}{}
+	for i := 1; i <= 14; i++ {
+		many[fmt.Sprintf("k%02d", i)] = i
+	}
+	if got := payloadKeys(many); got != "[k01,k02,k03,k04,k05,k06,k07,k08,k09,k10,k11,k12,+2]" {
+		t.Errorf("expected the bounded sorted key list, got %q", got)
+	}
+	if got := payloadKeys(map[string]interface{}{}); got != "[]" {
+		t.Errorf("expected [] for an empty payload, got %q", got)
+	}
+}
+
+func TestSSEObservationSummary(t *testing.T) {
+	if got := (&sseObservation{}).summary(); got != "sseEventFrames=0 sseEventNames=[] toolProgressFrames=0 sseChunkFrames=0" {
+		t.Errorf("unexpected empty summary: %q", got)
+	}
+
+	var o sseObservation
+	// "f" twice: a distinct name beyond the cap must be counted once, not once per
+	// frame, or the overflow count would report frames instead of names.
+	for _, name := range []string{"a", "a", "b", "c", "d", "e", "f", "f", "g"} {
+		o.noteEventFrame(name)
+	}
+	o.noteEventFrame(hermesToolProgressEvent)
+	o.chunkFrames = 3
+
+	want := "sseEventFrames=10 sseEventNames=[a,b,c,d,e,+3] toolProgressFrames=1 sseChunkFrames=3"
+	if got := o.summary(); got != want {
+		t.Errorf("expected %q, got %q", want, got)
+	}
+}
+
+func TestTruncateTraceData(t *testing.T) {
+	if hermesTraceMaxDataChars != 2000 {
+		t.Fatalf("the documented trace cap is 2000 characters, got %d — .env.example and the README say 2000", hermesTraceMaxDataChars)
+	}
+	// Exactly at the cap: kept whole, no marker.
+	exact := strings.Repeat("a", 2000)
+	if got := truncateTraceData(exact); got != exact {
+		t.Errorf("a payload of exactly 2000 chars must be kept whole, got %d chars with suffix %q",
+			len([]rune(got)), got[len(got)-40:])
+	}
+	// Accented text, because the payloads are French course content: cutting on
+	// bytes would leave a broken character in the logs.
+	long := strings.Repeat("é", 2500)
+	got := truncateTraceData(long)
+	const marker = "…[truncated: 2000 of 2500 chars]"
+	if !strings.HasSuffix(got, marker) {
+		t.Errorf("expected the suffix %q, got the last 60 chars %q", marker, string([]rune(got)[len([]rune(got))-60:]))
+	}
+	if kept := len([]rune(strings.TrimSuffix(got, marker))); kept != 2000 {
+		t.Errorf("expected 2000 characters kept, got %d", kept)
+	}
+	if !utf8.ValidString(got) {
+		t.Error("the truncated payload must stay valid UTF-8")
+	}
+}
+
+// TestHermesBridge_Trace_PayloadTruncated: end to end, the cap really applies to
+// what reaches the log — a whole course file must not be dumped in full.
+func TestHermesBridge_Trace_PayloadTruncated(t *testing.T) {
+	t.Setenv(hermesTraceEventsEnv, "true")
+
+	payload := writeFramePayload()
+	payload["content"] = strings.Repeat("A", 2500) + "QUEUE_DU_FICHIER"
+
+	logged, _ := runFrameJob(t, t.TempDir(), hermesToolProgressEvent, "desk", payload)
+
+	if !strings.Contains(logged, "…[truncated: 2000 of ") {
+		t.Errorf("expected the truncation marker in the trace, got the first 300 chars:\n%s", logged[:min(len(logged), 300)])
+	}
+	if strings.Contains(logged, "QUEUE_DU_FICHIER") {
+		t.Error("the tail of an oversized payload must not reach the logs")
+	}
+}
+
+// TestHermesBridge_Trace_LyaModeStillMirrorsNothing: the instrumentation observes,
+// it must not open a file path. Mode Lya has no file access by design.
+func TestHermesBridge_Trace_LyaModeStillMirrorsNothing(t *testing.T) {
+	t.Setenv(hermesTraceEventsEnv, "true")
+	tmpDir := t.TempDir()
+
+	logged, events := runFrameJob(t, tmpDir, hermesToolProgressEvent, "lya", writeFramePayload())
+
+	assertNoErrorEvent(t, events)
+	assertWorkspaceEmpty(t, tmpDir)
+	for _, ev := range events {
+		if m, ok := ev.Tool.(map[string]interface{}); ok && m["name"] == "file_changed" {
+			t.Errorf("no file_changed must be emitted in mode lya, got %v", m)
+		}
+	}
+	if !strings.Contains(logged, "mirroredWrites=0 skippedWrites=0") {
+		t.Errorf("mode lya must write nothing, got:\n%s", logged)
+	}
+	// The frame is still observed — tracing is deliberately mode-independent, it is
+	// the mirroring that is gated.
+	if !strings.Contains(logged, "toolProgressFrames=1") {
+		t.Errorf("expected the frame to be counted in mode lya too, got:\n%s", logged)
+	}
+	if strings.Contains(logged, "hermes: tool frame seen") {
+		t.Errorf("mode lya must not reach the mirroring code at all, got:\n%s", logged)
+	}
+}
+
+// TestHermesBridge_Trace_MirroredWriteStillWorks: the added logging must not
+// change the one path that does work today.
+func TestHermesBridge_Trace_MirroredWriteStillWorks(t *testing.T) {
+	t.Setenv(hermesTraceEventsEnv, "true")
+	tmpDir := t.TempDir()
+
+	logged, events := runFrameJob(t, tmpDir, hermesToolProgressEvent, "desk", writeFramePayload())
+
+	assertNoErrorEvent(t, events)
+	if !hasFileChanged(events, "Test_folders/test_nvx_cours.md") {
+		t.Errorf("expected file_changed with the relative path, got %v", toolEventNames(events))
+	}
+	data, err := os.ReadFile(filepath.Join(tmpDir, "Test_folders", "test_nvx_cours.md"))
+	if err != nil {
+		t.Fatalf("expected the write to be mirrored: %v", err)
+	}
+	if !strings.Contains(string(data), "Ligne ajoutée pour tester l'écriture dans le fichier.") {
+		t.Errorf("unexpected mirrored content: %q", string(data))
+	}
+	if !strings.Contains(logged, "mirroredWrites=1 skippedWrites=0 sseEventFrames=1 sseEventNames=[hermes.tool.progress] toolProgressFrames=1") {
+		t.Errorf("expected the summary to report the mirrored frame, got:\n%s", logged)
 	}
 }
