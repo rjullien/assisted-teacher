@@ -279,7 +279,7 @@ export default function App() {
             </Allotment>
           </div>
         ) : (
-          <LyaChat />
+          <LyaChat userName={userName} />
         )}
         <ProgrammeDrawer
           open={programmeDrawerOpen}
