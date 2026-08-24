@@ -95,6 +95,13 @@ describe('LyaChat', () => {
     vi.stubGlobal('WebSocket', OrigMock)
   })
 
+  it('has no Desk sub-mode selector — mode Lya never touches files', async () => {
+    await renderConnected()
+    expect(screen.queryByText('Copie / insertion')).not.toBeInTheDocument()
+    expect(screen.queryByText('Mise à jour directe')).not.toBeInTheDocument()
+    expect(document.querySelector('.chat-workfile')).toBeNull()
+  })
+
   it('has input and send button', async () => {
     await renderConnected()
     expect(screen.getByPlaceholderText('Écris à Lya...')).toBeInTheDocument()

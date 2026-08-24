@@ -67,7 +67,15 @@
     "example1": "\"Generate 5 gap-fill exercises on the present perfect, B1 level\"",
     "example2": "\"Rephrase this paragraph for {niveau} students\"",
     "example3": "\"Does this lesson meet axis 4 of the curriculum?\"",
-    "example4": "\"Suggest a sequence plan on the Commonwealth axis\""
+    "example4": "\"Suggest a sequence plan on the Commonwealth axis\"",
+    "subModeLabel": "Mode:",
+    "subModeInsert": "Copy / insert",
+    "subModeDirect": "Direct update",
+    "subModeInsertHint": "Lya answers in the chat, you copy or insert what you keep. No file is modified.",
+    "subModeDirectHint": "Lya edits the working file shown below directly.",
+    "workingFile": "✍️ Working file: {path}",
+    "noWorkingFile": "⚠️ No file open: open a file so Lya can edit it.",
+    "updated": "File updated by Lya."
   },
   "programme": {
     "title": "Official Curriculum",

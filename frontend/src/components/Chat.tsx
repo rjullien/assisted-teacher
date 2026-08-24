@@ -70,7 +70,31 @@ export interface ChatSession {
   jobId: string | null
   /** Highest StreamEvent.seq already applied — the replay cursor. */
   lastSeq: number
+  /**
+   * Desk sub-mode. Lives in the session rather than in local state so the
+   * choice survives the unmounts described above (leaving the AI tab on mobile,
+   * switching to mode Lya): a teacher who enabled direct updates would
+   * otherwise silently fall back to copie/insertion on the next message.
+   * Optional so an older persisted session still loads — see deskSubMode below.
+   */
+  deskSubMode?: DeskSubMode
 }
+
+/**
+ * The two ways mode Desk can work.
+ *
+ * - `insert`: Lya answers in the chat, the teacher inserts what they keep. No
+ *   file is ever modified (the backend declares no file tool at all).
+ * - `direct`: Lya updates the working file herself through the backend file
+ *   tools, and the panel shows which file is at stake.
+ */
+export type DeskSubMode = 'insert' | 'direct'
+
+/**
+ * Default sub-mode: the non-destructive one. A teacher who never saw the
+ * selector must not discover it by finding a course file rewritten.
+ */
+export const DEFAULT_DESK_SUB_MODE: DeskSubMode = 'insert'
 
 /**
  * Progress tokens emitted by the pi bridge, mapped to i18n keys.
@@ -89,6 +113,7 @@ export const emptyChatSession: ChatSession = {
   input: '',
   jobId: null,
   lastSeq: 0,
+  deskSubMode: DEFAULT_DESK_SUB_MODE,
 }
 
 interface ChatProps {
@@ -276,6 +301,14 @@ export default function Chat({
   )
 
   const setInput = useCallback((value: string) => patchSession({ input: value }), [patchSession])
+
+  // A session persisted before the selector existed has no deskSubMode: fall
+  // back to the safe sub-mode instead of undefined reaching the payload.
+  const deskSubMode: DeskSubMode = session.deskSubMode ?? DEFAULT_DESK_SUB_MODE
+  const setDeskSubMode = useCallback(
+    (value: DeskSubMode) => patchSession({ deskSubMode: value }),
+    [patchSession]
+  )
 
   // --- Transient state (intentionally reset on remount) ---------------------
   const [connected, setConnected] = useState(false)
@@ -600,6 +633,9 @@ export default function Chat({
       content,
       system: systemPrompt,
       mode: agent === 'pi' ? 'pi' : 'desk',
+      // Sent unconditionally: the backend only reads it in mode desk, and always
+      // sending it keeps the payload shape stable for the logs.
+      deskMode: deskSubMode,
       currentFile: currentFile || undefined,
     })
   }
@@ -634,6 +670,42 @@ export default function Chat({
           </span>
         )}
       </div>
+      {/* Desk only: mode Pi always edits the file, so it has no sub-mode. */}
+      {agent !== 'pi' && (
+        <>
+          <div className="chat-submode">
+            <span className="chat-submode-label">{t('chat.subModeLabel')}</span>
+            <div className="chat-submode-switcher">
+              <button
+                type="button"
+                className={`chat-submode-btn ${deskSubMode === 'insert' ? 'active' : ''}`}
+                aria-pressed={deskSubMode === 'insert'}
+                title={t('chat.subModeInsertHint')}
+                onClick={() => setDeskSubMode('insert')}
+              >
+                {t('chat.subModeInsert')}
+              </button>
+              <button
+                type="button"
+                className={`chat-submode-btn ${deskSubMode === 'direct' ? 'active' : ''}`}
+                aria-pressed={deskSubMode === 'direct'}
+                title={t('chat.subModeDirectHint')}
+                onClick={() => setDeskSubMode('direct')}
+              >
+                {t('chat.subModeDirect')}
+              </button>
+            </div>
+          </div>
+          {/* In the direct sub-mode Lya rewrites this exact file, so it is named
+              before the conversation: an edit landing in an unexpected course
+              file is not something a teacher can undo from here. */}
+          {deskSubMode === 'direct' && (
+            <div className={`chat-workfile ${currentFile ? '' : 'chat-workfile--none'}`}>
+              {currentFile ? t('chat.workingFile', { path: currentFile }) : t('chat.noWorkingFile')}
+            </div>
+          )}
+        </>
+      )}
       <div className="chat-messages">
         {messages.length === 0 && (
           <div style={{ color: 'var(--text-muted)', fontSize: '13px', padding: '16px' }}>
@@ -656,7 +728,12 @@ export default function Chat({
             {msg.role === 'assistant' && !msg.isStreaming && (
               <div className="actions">
                 {msg.piWroteFiles ? (
-                  <span className="chat-pi-updated">{t('piChat.updated')}</span>
+                  // Name the agent that actually wrote: in the direct sub-mode it
+                  // is Lya, and crediting Pi there sent the teacher looking at the
+                  // wrong mode when checking what changed.
+                  <span className="chat-pi-updated">
+                    {agent === 'pi' ? t('piChat.updated') : t('chat.updated')}
+                  </span>
                 ) : (
                   <button onClick={() => onInsert(msg.content)}>
                     {t('chat.insert')}

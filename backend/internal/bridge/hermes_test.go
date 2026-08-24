@@ -607,7 +607,16 @@ func (s *scriptedHermes) request(t *testing.T, i int) map[string]interface{} {
 }
 
 // runHermesJob drives one prompt through the WebSocket and returns every event.
+// It sends NO deskMode field, which is exactly what an old frontend does: these
+// tests therefore also guard the backward-compatible default.
 func runHermesJob(t *testing.T, b *HermesBridge, prompt, mode string) []StreamEvent {
+	t.Helper()
+	return runHermesJobSub(t, b, prompt, mode, "")
+}
+
+// runHermesJobSub is runHermesJob with an explicit Desk sub-mode. An empty
+// deskMode omits the field from the payload rather than sending "".
+func runHermesJobSub(t *testing.T, b *HermesBridge, prompt, mode, deskMode string) []StreamEvent {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(b.HandleWebSocket))
 	defer server.Close()
@@ -619,7 +628,11 @@ func runHermesJob(t *testing.T, b *HermesBridge, prompt, mode string) []StreamEv
 	}
 	defer ws.Close()
 
-	msg, _ := json.Marshal(map[string]string{"type": "prompt", "content": prompt, "mode": mode})
+	payload := map[string]string{"type": "prompt", "content": prompt, "mode": mode}
+	if deskMode != "" {
+		payload["deskMode"] = deskMode
+	}
+	msg, _ := json.Marshal(payload)
 	ws.WriteMessage(websocket.TextMessage, msg)
 
 	var events []StreamEvent
@@ -1121,5 +1134,170 @@ func TestHermesBridge_ToolLoop_DegradesWhenToolsIgnored(t *testing.T) {
 	}
 	if names := toolEventNames(events); len(names) != 0 {
 		t.Errorf("expected no tool events, got %v", names)
+	}
+}
+
+// --- Desk sub-modes: copie/insertion vs mise à jour directe ---
+//
+// The teacher chooses between two sub-modes inside mode Desk. In "insert" Lya
+// answers in the chat only and nothing on disk may move, even if the model asks
+// for a write; in "direct" she edits the working file through the file tools.
+
+func TestHermesBridge_ToolLoop_InsertSubModeDeclaresNoTools(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// The fake asks for a write anyway: with no tools declared, that call is
+	// unsolicited and must never be executed.
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "write_file",
+			arguments: `{"path":"interdit.md","content":"non"}`}}},
+		{text: "Ne devrait pas arriver."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runHermesJobSub(t, b, "Écris un fichier", "desk", "insert")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events) // the job still completes normally for the teacher
+
+	if _, ok := hermes.request(t, 0)["tools"]; ok {
+		t.Error("sub-mode insert must not declare any tools")
+	}
+	if _, ok := hermes.request(t, 0)["tool_choice"]; ok {
+		t.Error("sub-mode insert must not send tool_choice")
+	}
+	if got := hermes.requestCount(); got != 1 {
+		t.Errorf("expected a single request in sub-mode insert, got %d", got)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "interdit.md")); err == nil {
+		t.Error("no file must be written in sub-mode insert")
+	}
+	for _, ev := range events {
+		if ev.Type != "tool" {
+			continue
+		}
+		if m, ok := ev.Tool.(map[string]interface{}); ok && m["name"] == "file_changed" {
+			t.Error("no file_changed event must be emitted in sub-mode insert")
+		}
+	}
+}
+
+// TestHermesBridge_FileWrite_InsertSubMode is the mirror of
+// TestHermesBridge_FileWrite_LyaMode for the v1.9.0 progress-frame interception:
+// the event still reaches the chat, but nothing is written.
+func TestHermesBridge_FileWrite_InsertSubMode(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	hermes := mockHermesFileWriteServer("write_file", "test/output.md", "# Hello from Lya", "done")
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runHermesJobSub(t, b, "Écris un fichier", "desk", "insert")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	foundToolProgress := false
+	for _, ev := range events {
+		if ev.Type != "tool" {
+			continue
+		}
+		m, ok := ev.Tool.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if m["name"] == "write_file" {
+			foundToolProgress = true
+		}
+		if m["name"] == "file_changed" {
+			t.Error("file_changed event should NOT be emitted in sub-mode insert")
+		}
+	}
+	if !foundToolProgress {
+		t.Error("expected the tool progress event to still be forwarded in sub-mode insert")
+	}
+
+	filePath := filepath.Join(tmpDir, "test", "output.md")
+	if _, err := os.Stat(filePath); err == nil {
+		t.Errorf("file should NOT have been written in sub-mode insert, but found at %s", filePath)
+	}
+}
+
+func TestHermesBridge_ToolLoop_DirectSubModeWrites(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "write_file",
+			arguments: `{"path":"B1/direct.md","content":"# Direct"}`}}},
+		{text: "C'est écrit."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runHermesJobSub(t, b, "Mets à jour B1/direct.md", "desk", "direct")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	names := declaredToolNames(t, hermes.request(t, 0))
+	if len(names) != 3 || names[0] != "read_file" || names[1] != "write_file" || names[2] != "patch_file" {
+		t.Errorf("expected tools [read_file write_file patch_file] in sub-mode direct, got %v", names)
+	}
+	data, err := os.ReadFile(filepath.Join(tmpDir, "B1", "direct.md"))
+	if err != nil {
+		t.Fatalf("expected the file to exist in sub-mode direct: %v", err)
+	}
+	if string(data) != "# Direct" {
+		t.Errorf("unexpected file content: %q", string(data))
+	}
+	if !hasFileChanged(events, "B1/direct.md") {
+		t.Errorf("expected a file_changed tool event, got %v", toolEventNames(events))
+	}
+}
+
+// TestHermesBridge_ToolLoop_AbsentSubModeIsDirect pins the backward-compatible
+// default: a frontend that predates the sub-mode selector sends no deskMode and
+// must keep the v1.9.x behaviour instead of silently losing file writes.
+func TestHermesBridge_ToolLoop_AbsentSubModeIsDirect(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "write_file",
+			arguments: `{"path":"legacy.md","content":"# Legacy"}`}}},
+		{text: "C'est écrit."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runHermesJobSub(t, b, "Écris legacy.md", "desk", "") // no deskMode field
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	if names := declaredToolNames(t, hermes.request(t, 0)); len(names) != 3 {
+		t.Errorf("expected the three tools to be declared without deskMode, got %v", names)
+	}
+	if _, err := os.ReadFile(filepath.Join(tmpDir, "legacy.md")); err != nil {
+		t.Fatalf("expected the file to be written without deskMode: %v", err)
+	}
+	if !hasFileChanged(events, "legacy.md") {
+		t.Errorf("expected a file_changed tool event, got %v", toolEventNames(events))
+	}
+}
+
+func TestNormalizeDeskMode(t *testing.T) {
+	cases := map[string]string{
+		"insert":   deskModeInsert,
+		"INSERT":   deskModeInsert,
+		" insert ": deskModeInsert,
+		"direct":   deskModeDirect,
+		"":         deskModeDirect, // absent field
+		"garbage":  deskModeDirect, // unknown value must not disable writes silently
+	}
+	for in, want := range cases {
+		if got := normalizeDeskMode(in); got != want {
+			t.Errorf("normalizeDeskMode(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

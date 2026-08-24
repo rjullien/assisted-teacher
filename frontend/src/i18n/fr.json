@@ -67,7 +67,15 @@
     "example1": "\"Génère 5 exercices de gap-fill sur le present perfect, niveau B1\"",
     "example2": "\"Reformule ce paragraphe pour des élèves de {niveau}\"",
     "example3": "\"Ce cours respecte-t-il l'axe 4 du programme ?\"",
-    "example4": "\"Propose un plan de séquence sur l'axe Commonwealth\""
+    "example4": "\"Propose un plan de séquence sur l'axe Commonwealth\"",
+    "subModeLabel": "Mode :",
+    "subModeInsert": "Copie / insertion",
+    "subModeDirect": "Mise à jour directe",
+    "subModeInsertHint": "Lya répond dans le chat, tu copies ou insères ce que tu gardes. Aucun fichier n'est modifié.",
+    "subModeDirectHint": "Lya modifie directement le fichier de travail affiché ci-dessous.",
+    "workingFile": "✍️ Fichier de travail : {path}",
+    "noWorkingFile": "⚠️ Aucun fichier ouvert : ouvre un fichier pour que Lya puisse le modifier.",
+    "updated": "Fichier mis à jour par Lya."
   },
   "programme": {
     "title": "Programme officiel",

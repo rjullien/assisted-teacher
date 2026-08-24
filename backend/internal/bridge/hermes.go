@@ -309,12 +309,34 @@ var hermesFileTools = []map[string]interface{}{
 	},
 }
 
+// Desk sub-modes. In "insert" Lya only answers in the chat and the teacher
+// inserts what they keep by hand; in "direct" Lya updates the working file
+// herself through the file tools.
+const (
+	deskModeInsert = "insert"
+	deskModeDirect = "direct"
+)
+
+// normalizeDeskMode resolves the sub-mode sent by the frontend.
+//
+// An absent or unrecognised value resolves to "direct", NOT to "insert": a
+// deployed frontend that does not know the field yet (and the v1.9.x
+// behaviour it was released with) would otherwise silently stop writing
+// files, with no error anywhere to explain why. Refusing to write is a
+// visible-looking success, which is the worst failure mode here.
+func normalizeDeskMode(deskMode string) string {
+	if strings.ToLower(strings.TrimSpace(deskMode)) == deskModeInsert {
+		return deskModeInsert
+	}
+	return deskModeDirect
+}
+
 // fileToolsEnabled is the single gate for declaring AND executing the local file
 // tools. Kept in one place on purpose: the Desk sub-mode toggle (copie/insertion
-// vs mise à jour directe) has to narrow the same condition, and a gate scattered
+// vs mise à jour directe) narrows the same condition, and a gate scattered
 // across the SSE loop is how mode Lya ends up writing files by accident.
-func (b *HermesBridge) fileToolsEnabled(mode string) bool {
-	return mode == "desk" && b.workDir != ""
+func (b *HermesBridge) fileToolsEnabled(mode, deskMode string) bool {
+	return mode == "desk" && normalizeDeskMode(deskMode) == deskModeDirect && b.workDir != ""
 }
 
 // fileToolArgs is the union of the arguments of the three tools. A single struct
@@ -596,8 +618,12 @@ func (b *HermesBridge) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			// content into Content itself — this is observability, not context.
 			CurrentFile string `json:"currentFile,omitempty"`
 			Mode        string `json:"mode,omitempty"`
-			JobID       string `json:"jobId,omitempty"`
-			After       int    `json:"after,omitempty"`
+			// Desk sub-mode: "insert" (Lya answers, the teacher inserts) or
+			// "direct" (Lya edits the working file through the file tools).
+			// Only read when Mode is "desk"; see normalizeDeskMode for the default.
+			DeskMode string `json:"deskMode,omitempty"`
+			JobID    string `json:"jobId,omitempty"`
+			After    int    `json:"after,omitempty"`
 		}
 		if err := json.Unmarshal(message, &msg); err != nil {
 			sendWSJSON(conn, StreamEvent{Type: "error", Error: "invalid JSON"})
@@ -607,7 +633,7 @@ func (b *HermesBridge) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		switch msg.Type {
 		case "prompt":
 			// Start a new job and immediately subscribe
-			job := b.startJob(msg.Content, msg.System, msg.CurrentFile, msg.Mode)
+			job := b.startJob(msg.Content, msg.System, msg.CurrentFile, msg.Mode, msg.DeskMode)
 			sendWSJSON(conn, StreamEvent{Type: "meta", JobID: job.ID})
 			b.streamToWS(conn, job, 0)
 		case "subscribe":
@@ -625,7 +651,7 @@ func (b *HermesBridge) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 // startJob creates a background job that calls Hermes streaming.
-func (b *HermesBridge) startJob(content, systemPrompt, currentFile, mode string) *Job {
+func (b *HermesBridge) startJob(content, systemPrompt, currentFile, mode, deskMode string) *Job {
 	b.hub.gc()
 	ctx, cancel := context.WithTimeout(context.Background(), jobRunTimeout)
 	job := &Job{
@@ -647,7 +673,8 @@ func (b *HermesBridge) startJob(content, systemPrompt, currentFile, mode string)
 		if mode == "" {
 			mode = "desk"
 		}
-		err := b.callHermesStream(ctx, job, content, systemPrompt, mode)
+		deskMode = normalizeDeskMode(deskMode)
+		err := b.callHermesStream(ctx, job, content, systemPrompt, mode, deskMode)
 		durationMs := time.Since(start).Milliseconds()
 		status := "done"
 		if job.status == JobRunning {
@@ -673,8 +700,11 @@ func (b *HermesBridge) startJob(content, systemPrompt, currentFile, mode string)
 		if file == "" {
 			file = "-"
 		}
-		log.Printf("agent_usage agent=lya mode=%s jobId=%s promptLen=%d file=%s durationMs=%d status=%s",
-			mode, job.ID, len(content), file, durationMs, status)
+		// deskMode is logged even outside mode desk: it is the effective value the
+		// gate used, so a "no file was written" report can be traced to the
+		// sub-mode the teacher was in rather than guessed.
+		log.Printf("agent_usage agent=lya mode=%s deskMode=%s jobId=%s promptLen=%d file=%s durationMs=%d status=%s",
+			mode, deskMode, job.ID, len(content), file, durationMs, status)
 	}()
 	return job
 }
@@ -684,16 +714,17 @@ func (b *HermesBridge) startJob(content, systemPrompt, currentFile, mode string)
 // model asked for and re-posts with their results until the model answers with
 // text only (or maxToolLoops is reached).
 //
-// mode controls file access: only "desk" declares and executes the file tools,
-// and only "desk" writes files from hermes.tool.progress frames.
-func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, systemPrompt, mode string) error {
+// mode and deskMode control file access: only mode "desk" in the "direct"
+// sub-mode declares and executes the file tools, and only that combination
+// writes files from hermes.tool.progress frames. See fileToolsEnabled.
+func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, systemPrompt, mode, deskMode string) error {
 	messages := []map[string]interface{}{}
 	if systemPrompt != "" {
 		messages = append(messages, map[string]interface{}{"role": "system", "content": systemPrompt})
 	}
 	messages = append(messages, map[string]interface{}{"role": "user", "content": content})
 
-	toolsEnabled := b.fileToolsEnabled(mode)
+	toolsEnabled := b.fileToolsEnabled(mode, deskMode)
 
 	// One greppable diagnostic per job. supported=true means Hermes really did
 	// forward the `tools` parameter to the model and streamed tool_calls back —
@@ -704,9 +735,12 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 		toolCallCount int
 		sawToolCalls  bool
 	)
+	// deskMode is part of the line so 'no tool calls because Hermes ignores the
+	// tools parameter' cannot be confused with 'no tool calls because the teacher
+	// was in the copie/insertion sub-mode, where nothing is declared'.
 	defer func() {
-		log.Printf("hermes: tool_calls supported=%t (mode=%s loops=%d toolCalls=%d)",
-			sawToolCalls, mode, loops, toolCallCount)
+		log.Printf("hermes: tool_calls supported=%t (mode=%s deskMode=%s loops=%d toolCalls=%d)",
+			sawToolCalls, mode, deskMode, loops, toolCallCount)
 	}()
 
 	for loops = 1; loops <= maxToolLoops; loops++ {
@@ -725,7 +759,7 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 		if err != nil {
 			return err
 		}
-		turn, err := b.streamTurn(job, resp.Body, mode, &full)
+		turn, err := b.streamTurn(job, resp.Body, mode, deskMode, &full)
 		resp.Body.Close()
 		if err != nil {
 			return err
@@ -746,8 +780,8 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 		if !toolsEnabled {
 			// No tools were declared, so tool_calls here are unsolicited. Executing
 			// them would let mode Lya (or a job without workspace) touch files.
-			log.Printf("hermes: refusing %d unsolicited tool call(s) — file tools are only enabled in mode desk (mode=%s workDir=%q)",
-				len(turn.toolCalls), mode, b.workDir)
+			log.Printf("hermes: refusing %d unsolicited tool call(s) — file tools are only enabled in mode desk, sub-mode direct (mode=%s deskMode=%s workDir=%q)",
+				len(turn.toolCalls), mode, deskMode, b.workDir)
 			job.append(StreamEvent{Type: "done", Reply: full.String()})
 			return nil
 		}
@@ -906,7 +940,7 @@ type turnResult struct {
 //
 // data: [DONE] ends the TURN, not necessarily the job: the done event is emitted
 // by callHermesStream only once a turn came back without tool calls.
-func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode string, full *strings.Builder) (turnResult, error) {
+func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode, deskMode string, full *strings.Builder) (turnResult, error) {
 	var res turnResult
 
 	scanner := bufio.NewScanner(body)
@@ -949,8 +983,10 @@ func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode string, full *s
 
 			// If this is a file-write tool with status "done", write file to disk
 			// and emit a file_changed event (like PiBridge does).
-			// Only write files in "desk" mode — Lya mode must never write.
-			if mode == "desk" {
+			// Same gate as the tool loop: mode Lya must never write, and neither
+			// must the copie/insertion sub-mode — otherwise a write-flavoured
+			// progress frame would mutate a file the teacher asked to keep intact.
+			if b.fileToolsEnabled(mode, deskMode) {
 				if toolMap, ok := tool.(map[string]interface{}); ok {
 					if relPath := b.handleToolFileWrite(toolMap); relPath != "" {
 						job.append(StreamEvent{
