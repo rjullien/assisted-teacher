@@ -1,0 +1,22 @@
+{
+  "task_id": "task-hermes-trace-sse",
+  "task_description": "Stop guessing the shape of Lya's tool frames. v1.9.0 (write interception), v1.10.0 (declared tools) and v1.10.1 (Hermes-side path mapping) were each written against an ASSUMED hermes.tool.progress payload and each failed in production the same way: Lya answers « c'est fait », nothing appears in the workspace, and no tool-activity line appears anywhere in the transcript. Deliver instrumentation instead of a fourth behavioural guess: an opt-in raw SSE frame trace (HERMES_TRACE_EVENTS), an always-on per-job summary that distinguishes 'no tool frame ever arrived' from 'one arrived and a guard rejected it', and a distinct greppable reason for every branch of handleToolFileWrite that used to return silently. Branch: fix/hermes-trace-sse-frames.",
+  "status": "completed",
+  "feature_order": [
+    "FEAT-001"
+  ],
+  "blocked_reason": null,
+  "verification": {
+    "build": "pass",
+    "tests": "pass",
+    "docker_build": "skipped",
+    "summary": "backend go build / go vet / gofmt -l (no output) / go test ./... -count=1 -timeout=90s all green; frontend 10 vitest files / 121 tests and npm run build ok (frontend untouched). 15 mutants applied to hermes.go, each verified as really applied (anchor present exactly once + file content differs from the backup) and each killed. git diff vs main is empty for backend/internal/bridge/pi.go, frontend/src/components/LyaChat.tsx and version.json.",
+    "unverifiable": "Nothing was verified against the real Hermes gateway. This sandbox has no tailscale client, no kubeconfig and no valid API_SERVER_KEY; the public endpoint hermes-lya.bapttf.com answers HTTP 503 {\"detail\":\"Auth provider 'self-hosted' unreachable\"} to a POST /v1/chat/completions with an invalid key. The real frame shape therefore remains unknown BY DESIGN of this change: capturing it is what the delivered instrumentation is for."
+  },
+  "user_steering": [
+    {
+      "verbatim_fr": "Il fait monter un truc de test pour valider ça , si tu fais au hasard tu ne vas pas y arriver. Tu a tailscale pour être dans le network du vps et voir les secrets",
+      "handled_by": "Partly. No live validation was possible from this sandbox: no tailscale/tailscaled binary, no kubectl, no kubeconfig, and every secret lives in Infisical (vps-infra only holds InfisicalSecret references). A probe POST to the public endpoint returns a Hermes 503 'Auth provider self-hosted unreachable' with an invalid key. Instead of guessing, the change ships two harnesses: (1) the in-app trace HERMES_TRACE_EVENTS with the exact kubectl grep command in the README, and (2) scripts/capture-hermes-frames.sh, which posts the incident prompt straight to Hermes and prints the event names plus the KEYS of the first tool frame. The script was exercised end to end against a local fake SSE server (reported 'event: lya.file.written' and keys ['file','state','tool']) and against the real public endpoint (correctly reported the non-SSE 503 body instead of concluding 'no tool frame')."
+    }
+  ]
+}
