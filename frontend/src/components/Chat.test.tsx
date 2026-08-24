@@ -459,6 +459,141 @@ describe('Chat', () => {
     })
   })
 
+  // The prompt must not contradict the tools declared in the very same request:
+  // telling Lya she cannot open the file is what made her answer with text
+  // instead of calling patch_file in the direct sub-mode.
+  it('mode Desk keeps the "no file access" wording in copie/insertion', async () => {
+    const ws = trackWebSockets()
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya' })
+
+    const payload = await sendPrompt(ws.instances, 'Complète ce cours')
+
+    expect(payload.content).toContain("tu n'as pas accès à mon dossier de travail")
+    expect(payload.content).not.toContain('patch_file')
+    // The inlining fallback is untouched.
+    expect(payload.content).toContain('The quick brown fox jumps over the lazy dog.')
+
+    ws.restore()
+  })
+
+  it('mode Desk announces the file tools in the direct sub-mode, and still inlines the file', async () => {
+    const ws = trackWebSockets()
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya' })
+
+    fireEvent.click(screen.getByText('Mise à jour directe'))
+    await waitFor(() => {
+      expect(screen.getByText('Mise à jour directe')).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    const payload = await sendPrompt(ws.instances, 'Mets à jour ce cours')
+
+    expect(payload.content).not.toContain("tu n'as pas accès à mon dossier de travail")
+    expect(payload.content).toContain('patch_file')
+    // The v1.9.1 fallback stays: the content travels even with the tools armed,
+    // because a gateway that drops `tools` must still be able to answer.
+    expect(payload.content).toContain('The quick brown fox jumps over the lazy dog.')
+    expect(payload.content.trimEnd().endsWith('Mets à jour ce cours')).toBe(true)
+
+    ws.restore()
+  })
+
+  it('shows what the selected sub-mode does, and where to find the direct one', async () => {
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya' })
+
+    // Rendered text, not a tooltip: a teacher who was getting file writes before
+    // the selector existed has to be able to find the toggle on a touch screen.
+    const hint = document.querySelector('.chat-submode-hint')
+    expect(hint?.textContent).toContain('Mise à jour directe')
+
+    fireEvent.click(screen.getByText('Mise à jour directe'))
+    await waitFor(() => {
+      expect(document.querySelector('.chat-submode-hint')?.textContent).toContain(
+        'Lya modifie directement le fichier de travail'
+      )
+    })
+  })
+
+  // --- Failed tool calls ----------------------------------------------------
+  //
+  // Refusals are a normal outcome of the tool loop (missing old_string, rejected
+  // extension, path outside the workspace). Rendered like a success, they leave
+  // the teacher trusting a file that never moved.
+
+  it('renders a refused write as an error, not as a write', async () => {
+    const ws = trackWebSockets()
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya' })
+
+    const lastWs = ws.instances[ws.instances.length - 1]
+    await act(async () => {
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 1, type: 'meta', jobId: 'job1' }) }))
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 2, type: 'tool', tool: { name: 'patch_file', path: 'B1/unit5.md', status: 'error', error: 'old_string introuvable' } }) }))
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 3, type: 'done', reply: 'Je réessaie.' }) }))
+    })
+
+    const toolMessages = document.querySelectorAll('.chat-message.tool')
+    expect(toolMessages.length).toBe(1)
+    expect(toolMessages[0].textContent).toContain('Échec sur B1/unit5.md')
+    expect(toolMessages[0].textContent).toContain('old_string introuvable')
+    expect(toolMessages[0].textContent).not.toContain('✏️ Écriture')
+
+    // Nothing was written, so the answer keeps the Insert button instead of
+    // claiming the file was updated.
+    expect(screen.queryByText('Fichier mis à jour par Lya.')).not.toBeInTheDocument()
+    expect(screen.getByText(/Insérer/)).toBeInTheDocument()
+
+    ws.restore()
+  })
+
+  it('keeps a trace of a tool call whose arguments could not be decoded', async () => {
+    const ws = trackWebSockets()
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya' })
+
+    const lastWs = ws.instances[ws.instances.length - 1]
+    await act(async () => {
+      // No path: the backend could not decode the arguments at all.
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 1, type: 'tool', tool: { name: 'write_file', path: '', status: 'error', error: 'arguments JSON invalides' } }) }))
+    })
+
+    const toolMessages = document.querySelectorAll('.chat-message.tool')
+    expect(toolMessages.length).toBe(1)
+    expect(toolMessages[0].textContent).toContain("Échec de l'outil write_file")
+    expect(toolMessages[0].textContent).toContain('arguments JSON invalides')
+
+    ws.restore()
+  })
+
+  it('flags a write that landed outside the announced working file', async () => {
+    const ws = trackWebSockets()
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya' })
+
+    const lastWs = ws.instances[ws.instances.length - 1]
+    await act(async () => {
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 1, type: 'tool', tool: { name: 'write_file', path: 'B1/autre.md', status: 'done', outsideWorkingFile: true } }) }))
+    })
+
+    const toolMessages = document.querySelectorAll('.chat-message.tool')
+    expect(toolMessages.length).toBe(1)
+    expect(toolMessages[0].textContent).toContain('✏️ Écriture de B1/autre.md')
+    expect(toolMessages[0].textContent).toContain('hors du fichier de travail affiché')
+
+    ws.restore()
+  })
+
+  it('does not flag a write on the announced working file', async () => {
+    const ws = trackWebSockets()
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya' })
+
+    const lastWs = ws.instances[ws.instances.length - 1]
+    await act(async () => {
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 1, type: 'tool', tool: { name: 'write_file', path: 'B1/unit5.md', status: 'done' } }) }))
+    })
+
+    const toolMessages = document.querySelectorAll('.chat-message.tool')
+    expect(toolMessages[0].textContent).toBe('✏️ Écriture de B1/unit5.md')
+
+    ws.restore()
+  })
+
   it('does not render the sub-mode selector in mode Pi', async () => {
     await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'pi' })
 

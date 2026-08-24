@@ -21,8 +21,23 @@ export interface NormalizedTool {
   name: string
   /** File path when the tool operates on one, else ''. */
   path: string
-  /** Lifecycle status ('started' | 'done' | …), or ''. */
+  /** Lifecycle status ('started' | 'done' | 'error' | …), or ''. */
   status: string
+  /**
+   * Why the tool failed, when `status` is 'error', else ''.
+   *
+   * The Hermes tool loop reports refusals (missing old_string, rejected
+   * extension, path outside the workspace) as `status: 'error'` events. Ignoring
+   * this field is what showed a refused write with the very same
+   * "✏️ Écriture de …" label as a successful one, leaving the teacher believing
+   * the file had changed.
+   */
+  error: string
+  /**
+   * True when the backend flagged the write as landing somewhere else than the
+   * working file named at the top of the Desk panel.
+   */
+  outsideWorkingFile: boolean
 }
 
 function str(v: unknown): string {
@@ -35,14 +50,21 @@ function str(v: unknown): string {
  * never interpolate `undefined` into a translation.
  */
 export function normalizeTool(raw: unknown): NormalizedTool {
-  if (!raw) return { name: '', path: '', status: '' }
+  const empty: NormalizedTool = {
+    name: '',
+    path: '',
+    status: '',
+    error: '',
+    outsideWorkingFile: false,
+  }
+  if (!raw) return empty
 
   // Hermes sometimes sends a bare string instead of an object.
   if (typeof raw === 'string') {
-    return { name: raw.trim(), path: '', status: '' }
+    return { ...empty, name: raw.trim() }
   }
 
-  if (typeof raw !== 'object') return { name: '', path: '', status: '' }
+  if (typeof raw !== 'object') return empty
 
   const t = raw as Record<string, unknown>
   const args = (t.args && typeof t.args === 'object' ? t.args : {}) as Record<string, unknown>
@@ -50,8 +72,9 @@ export function normalizeTool(raw: unknown): NormalizedTool {
   const name = str(t.name) || str(t.tool) || str(t.toolName) || str(t.label)
   const path = str(t.path) || str(t.file) || str(args.path) || str(args.file)
   const status = str(t.status) || str(t.state)
+  const error = str(t.error) || str(t.message)
 
-  return { name, path, status }
+  return { name, path, status, error, outsideWorkingFile: t.outsideWorkingFile === true }
 }
 
 /**
@@ -80,8 +103,11 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
 
 /** True when the payload describes a file operation worth keeping in the thread. */
 export function isFileOp(tool: NormalizedTool): boolean {
-  if (!tool.path) return false
-  return READ_TOOL_NAMES.has(tool.name) || WRITE_TOOL_NAMES.has(tool.name)
+  if (!READ_TOOL_NAMES.has(tool.name) && !WRITE_TOOL_NAMES.has(tool.name)) return false
+  // A failed call carries no path when the model's arguments could not be decoded
+  // at all. It still belongs in the thread: routed to the transient status line
+  // instead, the only trace of a failed write flashes by and disappears.
+  return tool.path !== '' || tool.status === 'error'
 }
 
 type Translate = (key: string, params?: Record<string, string | number>) => string
@@ -89,8 +115,17 @@ type Translate = (key: string, params?: Record<string, string | number>) => stri
 /**
  * Human label for a tool event. Falls back to a generic label when the payload
  * carries no usable name, so the UI can never surface a raw `{name}`.
+ *
+ * A failed tool gets its own label: a refusal that reads like a success is worse
+ * than no line at all, because the teacher then trusts a file that never moved.
  */
 export function toolLabel(tool: NormalizedTool, t: Translate): string {
+  if (tool.status === 'error') {
+    const reason = tool.error || t('piChat.toolErrorGeneric')
+    return tool.path
+      ? t('piChat.toolFailed', { path: tool.path, error: reason })
+      : t('piChat.toolFailedNoPath', { name: tool.name || '?', error: reason })
+  }
   if (tool.path && READ_TOOL_NAMES.has(tool.name)) return t('piChat.toolRead', { path: tool.path })
   if (tool.path && WRITE_TOOL_NAMES.has(tool.name)) {
     return t('piChat.toolWrite', { path: tool.path })

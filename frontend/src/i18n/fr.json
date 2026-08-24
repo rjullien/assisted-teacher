@@ -71,11 +71,12 @@
     "subModeLabel": "Mode :",
     "subModeInsert": "Copie / insertion",
     "subModeDirect": "Mise à jour directe",
-    "subModeInsertHint": "Lya répond dans le chat, tu copies ou insères ce que tu gardes. Aucun fichier n'est modifié.",
+    "subModeInsertHint": "Lya répond dans le chat, tu copies ou insères ce que tu gardes. Aucun fichier n'est modifié : passe en « Mise à jour directe » pour qu'elle modifie le fichier elle-même.",
     "subModeDirectHint": "Lya modifie directement le fichier de travail affiché ci-dessous.",
     "workingFile": "✍️ Fichier de travail : {path}",
     "noWorkingFile": "⚠️ Aucun fichier ouvert : ouvre un fichier pour que Lya puisse le modifier.",
-    "updated": "Fichier mis à jour par Lya."
+    "updated": "Fichier mis à jour par Lya.",
+    "outsideWorkingFile": "⚠️ hors du fichier de travail affiché"
   },
   "programme": {
     "title": "Programme officiel",
@@ -116,6 +117,9 @@
     "toolWrite": "✏️ Écriture de {path}",
     "toolOther": "🔧 {name}",
     "toolUnknown": "🔧 outil…",
+    "toolFailed": "⚠️ Échec sur {path} : {error}",
+    "toolFailedNoPath": "⚠️ Échec de l'outil {name} : {error}",
+    "toolErrorGeneric": "raison inconnue",
     "statusStarting": "⏳ Démarrage de Pi…",
     "statusThinking": "⏳ Pi réfléchit…",
     "statusRetrying": "🔄 Nouvelle tentative…",

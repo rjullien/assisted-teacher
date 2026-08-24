@@ -10,7 +10,31 @@ describe('normalizeTool', () => {
       name: 'read',
       path: 'B1/unit5.md',
       status: 'started',
+      error: '',
+      outsideWorkingFile: false,
     })
+  })
+
+  // Refusals are a normal outcome of the Hermes tool loop, and the only thing
+  // that distinguishes them from a successful write is these two fields.
+  it('reads the failure fields of the Hermes tool loop', () => {
+    const tool = normalizeTool({
+      name: 'patch_file',
+      path: 'a.md',
+      status: 'error',
+      error: 'old_string introuvable',
+      outsideWorkingFile: true,
+    })
+    expect(tool.status).toBe('error')
+    expect(tool.error).toBe('old_string introuvable')
+    expect(tool.outsideWorkingFile).toBe(true)
+  })
+
+  it('does not invent a working-file deviation', () => {
+    expect(normalizeTool({ name: 'write_file', path: 'a.md' }).outsideWorkingFile).toBe(false)
+    expect(
+      normalizeTool({ name: 'write_file', path: 'a.md', outsideWorkingFile: 'oui' }).outsideWorkingFile,
+    ).toBe(false)
   })
 
   it('accepts the alternate name keys Hermes uses', () => {
@@ -30,10 +54,11 @@ describe('normalizeTool', () => {
   })
 
   it('never returns undefined for an unusable payload', () => {
-    expect(normalizeTool(undefined)).toEqual({ name: '', path: '', status: '' })
-    expect(normalizeTool(null)).toEqual({ name: '', path: '', status: '' })
-    expect(normalizeTool({})).toEqual({ name: '', path: '', status: '' })
-    expect(normalizeTool({ status: 'started' })).toEqual({ name: '', path: '', status: 'started' })
+    const empty = { name: '', path: '', status: '', error: '', outsideWorkingFile: false }
+    expect(normalizeTool(undefined)).toEqual(empty)
+    expect(normalizeTool(null)).toEqual(empty)
+    expect(normalizeTool({})).toEqual(empty)
+    expect(normalizeTool({ status: 'started' })).toEqual({ ...empty, status: 'started' })
   })
 })
 
@@ -70,6 +95,41 @@ describe('toolLabel', () => {
     expect(toolLabel(normalizeTool({ name: 'web_search' }), t)).toBe('🔧 web_search')
   })
 
+  // A refused write used to be rendered with the very same "✏️ Écriture de …"
+  // label as a successful one, so the teacher trusted a file that never moved.
+  it('labels a failed tool as a failure, with its reason', () => {
+    const failed = normalizeTool({
+      name: 'patch_file',
+      path: 'a.md',
+      status: 'error',
+      error: 'old_string introuvable',
+    })
+    expect(toolLabel(failed, t)).toBe('⚠️ Échec sur a.md : old_string introuvable')
+    expect(toolLabel(failed, t)).not.toContain('Écriture')
+  })
+
+  it('labels a failed tool that has no usable path', () => {
+    const failed = normalizeTool({
+      name: 'write_file',
+      status: 'error',
+      error: 'arguments JSON invalides',
+    })
+    expect(toolLabel(failed, t)).toBe("⚠️ Échec de l'outil write_file : arguments JSON invalides")
+  })
+
+  it('labels a failure with no reason without leaking a placeholder', () => {
+    const label = toolLabel(normalizeTool({ name: 'write_file', path: 'a.md', status: 'error' }), t)
+    expect(label).toBe('⚠️ Échec sur a.md : raison inconnue')
+    expect(label).not.toContain('{')
+  })
+
+  it('labels failures in en too', () => {
+    const tEn = (key: string, params?: Record<string, string | number>) => tFn('en', key, params)
+    expect(
+      toolLabel(normalizeTool({ name: 'write_file', path: 'a.md', status: 'error', error: 'nope' }), tEn),
+    ).toBe('⚠️ Failed on a.md: nope')
+  })
+
   // This is the regression: a payload carrying no name used to reach
   // t('piChat.toolOther', { name: undefined }), and the i18n interpolation
   // echoed the placeholder, rendering the literal "🔧 {name}" in the UI.
@@ -99,5 +159,14 @@ describe('isFileOp', () => {
     expect(isFileOp(normalizeTool({ name: 'read_file', path: '' }))).toBe(false)
     expect(isFileOp(normalizeTool({ name: 'write_file' }))).toBe(false)
     expect(isFileOp(normalizeTool({ name: 'patch_file', path: '  ' }))).toBe(false)
+  })
+
+  // A tool call whose arguments could not be decoded carries no path. Sending it
+  // to the transient status line left the failed write with no trace at all.
+  it('keeps a failed file tool in the thread even without a path', () => {
+    expect(isFileOp(normalizeTool({ name: 'write_file', status: 'error', error: 'boom' }))).toBe(true)
+    expect(isFileOp(normalizeTool({ name: 'read_file', status: 'error' }))).toBe(true)
+    // Still not a file op: an unrelated tool failing stays a status line.
+    expect(isFileOp(normalizeTool({ name: 'web_search', status: 'error' }))).toBe(false)
   })
 })

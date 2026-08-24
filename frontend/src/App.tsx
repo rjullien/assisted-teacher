@@ -11,6 +11,7 @@ import Toolbar, { type Niveau, type AppMode } from './components/Toolbar'
 import { useIsMobile } from './hooks/useIsMobile'
 import { I18nContext, detectLocale, saveLocale, t as tFn, type Locale } from './i18n'
 import { getText, putText, postBlob, getJSON, handleAuthExpired } from './api'
+import { shouldReloadBuffer } from './editorSync'
 
 // --- Programme types ---
 
@@ -233,9 +234,17 @@ export default function App() {
 
   const handleFileTreeRefresh = () => setRefreshKey((k) => k + 1)
 
-  // Called by Chat when pi writes a file — reload it in the editor
+  // Called by Chat when pi or Lya writes a file — reload it in the editor, but
+  // never on top of unsaved edits (see shouldReloadBuffer).
   const handleFileChanged = useCallback(async (path: string) => {
-    if (path === currentFile) {
+    if (
+      shouldReloadBuffer({
+        changedPath: path,
+        openFile: currentFile,
+        buffer: fileContent,
+        lastSaved: lastSavedContent,
+      })
+    ) {
       const res = await getText(`/api/file?path=${encodeURIComponent(path)}`)
       if (res.ok && res.data !== null) {
         setFileContent(res.data)
@@ -244,7 +253,7 @@ export default function App() {
     }
     // Refresh file tree in case a new file was created
     setRefreshKey((k) => k + 1)
-  }, [currentFile])
+  }, [currentFile, fileContent, lastSavedContent])
 
   if (isMobile) {
     return (

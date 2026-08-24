@@ -2,8 +2,21 @@
   "task_id": "task-hermes-file-tools",
   "task_description": "Give Lya real file access on the backend in mode Desk: make the Hermes bridge multi-turn (OpenAI-style function calling) and implement read_file, write_file and patch_file tools jailed to WORKSPACE_DIR, so the teacher can say 'update this file' and Lya can request it, read it and complete it. Mode Desk gets two sub-modes (copie/insertion and mise à jour directe, the latter showing the working file at the top of the panel). Must degrade silently to today's single-turn behaviour if Hermes ignores the tools parameter, must not touch mode Lya or mode Pi, and must not remove the v1.9.1 prompt inlining fallback. Branch: feat/hermes-file-tools.",
   "status": "in_progress",
-  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004"],
+  "feature_order": [
+    "FEAT-001",
+    "FEAT-002",
+    "FEAT-003",
+    "FEAT-004"
+  ],
   "blocked_reason": null,
+  "verification": {
+    "build": "pass",
+    "tests": "pass",
+    "test_quality": "pass",
+    "docker_build": "skipped",
+    "summary": "Orchestrator-run final pass on feat/hermes-file-tools. Backend: go build, go vet, gofmt -l (no output), go test ./... -count=1 -timeout=90s all green (internal/api, internal/bridge, internal/export). Frontend: 8 vitest files / 90 tests passing (baseline was 79) and npm run build ok. git diff vs main is empty for backend/internal/bridge/pi.go, frontend/src/components/LyaChat.tsx and version.json. Test quality reviewed by reading the new tests: the backend tests drive real WebSocket jobs against a scripted fake Hermes that records every decoded request body, assert on files actually created/read/patched in t.TempDir(), on the role:\"tool\" messages fed back in the follow-up request, on the declared tools array, on request counts (loop cap = exactly 8, degradation = exactly 1) and on file_changed events; the frontend tests drive real WS messages and assert rendered DOM including the working-file banner's position above the conversation. Each feature was additionally mutation-verified by its sub-agent, and one surviving mutant in safePath was found and closed. Docker build skipped: the deployment images are built by the GitHub Actions CI, not required for this change.",
+    "unverifiable": "Whether the real Hermes gateway forwards the OpenAI tools parameter upstream cannot be tested from this sandbox (cluster unreachable). The loop degrades to the previous single-turn behaviour when no tool_calls come back, and every job logs one greppable line 'hermes: tool_calls supported=true|false (mode=... deskMode=... loops=... toolCalls=...)' to settle it from production logs."
+  },
   "user_steering": [
     {
       "verbatim_fr": "En fait en mode desk ia il faut deux mode. Un mode actuel avec copie et insertion et un mode update direct du fichier dans ce mode tu affiches le fichier de travail en haut du mode desk",
@@ -12,6 +25,31 @@
     {
       "verbatim_fr": "Release quand les tests sont ok",
       "handled_by": "orchestrator: this agent cannot push, merge, bump version.json or release. Reported upward once all features are green. Next version per AGENTS.md would be the minor bump 1.9.1 -> 1.10.0."
+    }
+  ],
+  "review_dispositions": [
+    {
+      "review": "2025-08-24-200500-review.md",
+      "pass": "v1",
+      "verdict_addressed": "NEEDS_CHANGES",
+      "summary": "14 issues, 13 fixed and 1 partially fixed with the remainder out of scope. No feature status changed; every behaviour change is covered by a test and each was mutation-verified (10 backend mutants, 7 frontend mutants, all caught). Suites after the fixes: backend go build/vet/gofmt/test green, frontend 9 vitest files / 108 tests (was 8 / 90) and npm run build ok.",
+      "per_issue": {
+        "1 prompt contradicts the declared tools": "FIXED — buildDeskPrompt context line is sub-mode aware, inlining and MAX_INLINED_FILE_CHARS untouched (FEAT-004)",
+        "2 tool errors rendered as successes": "FIXED — status/error surfaced, dedicated failure label (FEAT-003)",
+        "3 malformed arguments leave no trace": "FIXED — a failed known file tool stays in the thread without a path (FEAT-003)",
+        "4 fail-open deskMode default": "FIXED — three-state insert/direct/legacy, tools require an explicit direct (FEAT-002)",
+        "5 v1.9.1 write path off by default": "PARTIALLY FIXED — legacy clients keep the v1.9.0 interception and the sub-mode hint is now rendered and points at the toggle; the release note belongs to the release the orchestrator owns (FEAT-004)",
+        "6 writes not scoped to the working file": "FIXED as flagging, not refusing — a hard jail would break legitimate companion-file creation (FEAT-002 backend flag + FEAT-003 rendering)",
+        "7 read_file has no extension allowlist": "FIXED — allowedFileExts applies to reads too (FEAT-002)",
+        "8 no size cap on write_file": "FIXED — maxWriteFileChars = 200000 runes (FEAT-002)",
+        "9 truncated read then full rewrite": "FIXED — write_file refuses to shrink a file longer than maxReadFileChars (FEAT-002)",
+        "10 no cumulative context budget": "FIXED — maxToolResultChars = 60000 with explicit notices; the generic 4xx wording deliberately left alone (FEAT-002)",
+        "11 loop-cap message understates what happened": "FIXED — the cut message says the writes already applied are kept (FEAT-002)",
+        "12 finish_reason decoded but unused": "FIXED — cross-checked: a call is dropped when the turn did not finish on tool_calls and its arguments do not decode (FEAT-002)",
+        "13 editor buffer reload discards unsaved edits": "FIXED — editorSync.shouldReloadBuffer guards App.handleFileChanged; no UI banner (App has no notice infrastructure) (FEAT-004)",
+        "14 untested branches": "FIXED — unknown tool, malformed args, two calls in one turn, synthesised call_<i> id, chunk.error after a write, plus a test for every new guard (FEAT-002)"
+      },
+      "constraints_respected": "pi.go, LyaChat.tsx and version.json still byte-identical to main (git diff empty). buildDeskPrompt and MAX_INLINED_FILE_CHARS kept, inlining active in both sub-modes. Mode lya declares no tools and writes nothing. Degradation to the previous single-turn behaviour unchanged (exactly one request when no tool_calls come back). The single greppable line 'hermes: tool_calls supported=true|false (...)' unchanged. Nothing claims the loop was verified against the real Hermes gateway."
     }
   ]
 }

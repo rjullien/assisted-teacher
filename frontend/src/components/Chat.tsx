@@ -172,15 +172,33 @@ function fenceFor(content: string): string {
  *
  * The question comes last so it stays the most recent, most salient part of
  * the message after a potentially long document.
+ *
+ * The context line depends on the sub-mode, the inlining does not. In `direct`
+ * the backend declares read_file/write_file/patch_file in the same request, so
+ * keeping the `insert` wording ("tu n'as pas accès à mon dossier de travail, ne
+ * cherche pas à l'ouvrir") told the model those tools did not exist: a compliant
+ * model then answers with text instead of calling patch_file, and the feature
+ * looks like "Hermes ignores the tools parameter". The content still travels in
+ * the prompt in both sub-modes — it is the fallback for a gateway that drops
+ * `tools`, and it saves a read_file round-trip when it does not.
  */
-function buildDeskPrompt(currentFile: string, fileContent: string, question: string): string {
+function buildDeskPrompt(
+  currentFile: string,
+  fileContent: string,
+  question: string,
+  subMode: DeskSubMode
+): string {
   const body =
     fileContent.length > MAX_INLINED_FILE_CHARS
       ? fileContent.slice(0, MAX_INLINED_FILE_CHARS) + TRUNCATION_NOTICE
       : fileContent
   const fence = fenceFor(body)
+  const context =
+    subMode === 'direct'
+      ? `[Contexte: je travaille sur le fichier "${currentFile}". Son contenu est reproduit ci-dessous. Tu peux aussi le relire et le modifier directement avec tes outils read_file, write_file et patch_file : quand je te demande de mettre à jour ce fichier, modifie-le avec patch_file au lieu de me renvoyer le texte à recopier.]`
+      : `[Contexte: je travaille sur le fichier "${currentFile}". Son contenu est reproduit ci-dessous : tu n'as pas accès à mon dossier de travail, ne cherche pas à l'ouvrir.]`
   return [
-    `[Contexte: je travaille sur le fichier "${currentFile}". Son contenu est reproduit ci-dessous : tu n'as pas accès à mon dossier de travail, ne cherche pas à l'ouvrir.]`,
+    context,
     '',
     `${fence}${currentFile}`,
     body,
@@ -390,7 +408,13 @@ export default function Chat({
         // Everything else is Hermes working out loud: show it in a transient
         // status line so it does not accumulate in the conversation.
         if (isFileOp(tool)) {
-          const toolText = toolLabel(tool, t)
+          // The backend flags a write landing outside the working file named at
+          // the top of the panel. It is allowed (a companion file is legitimate)
+          // but never silent, otherwise the banner promises one file while
+          // another one changes.
+          const toolText = tool.outsideWorkingFile
+            ? `${toolLabel(tool, t)} ${t('chat.outsideWorkingFile')}`
+            : toolLabel(tool, t)
           setMessages((prev) => [
             ...prev,
             { id: `tool-${Date.now()}-${Math.random()}`, role: 'tool', content: toolText },
@@ -619,7 +643,7 @@ export default function Chat({
       // can fetch itself. Only Lya, who cannot reach the workspace, needs the text.
       content =
         agent !== 'pi' && fileContent
-          ? buildDeskPrompt(currentFile, fileContent, content)
+          ? buildDeskPrompt(currentFile, fileContent, content, deskSubMode)
           : `[Contexte: je travaille sur le fichier "${currentFile}"]\n\n${content}`
     }
 
@@ -695,6 +719,12 @@ export default function Chat({
                 {t('chat.subModeDirect')}
               </button>
             </div>
+          </div>
+          {/* The hint is rendered, not only a title attribute: a teacher who was
+              getting file writes before the selector existed has to be able to
+              find the toggle, and a tooltip is invisible on a touch screen. */}
+          <div className="chat-submode-hint">
+            {deskSubMode === 'direct' ? t('chat.subModeDirectHint') : t('chat.subModeInsertHint')}
           </div>
           {/* In the direct sub-mode Lya rewrites this exact file, so it is named
               before the conversation: an edit landing in an unexpected course

@@ -219,12 +219,27 @@ const (
 	// too big to inline in the prompt is also too big to return whole here, and
 	// the teacher gets the same behaviour whichever path fed the model.
 	maxReadFileChars = 20000
+	// maxWriteFileChars bounds a single write_file. Reads are capped, writes were
+	// not: a runaway generation could fill the workspace PVC (shared with the
+	// editor and the exports) with one call. Ten times the read cap leaves room
+	// for a whole rewritten course file and still bounds the damage.
+	maxWriteFileChars = 200000
+	// maxToolResultChars budgets the CUMULATIVE size of the tool results fed back
+	// to Hermes over the whole job. Without it, a few large read_file results
+	// stack up in `messages` over up to maxToolLoops round-trips, overflow the
+	// upstream context window, and the teacher gets a bare "Échec IA. Réessaie."
+	// instead of an answer. Cutting the results is recoverable; a 4xx is not.
+	maxToolResultChars = 60000
 )
 
-// allowedWriteExts restricts writes to the file types the app itself handles
-// (see backend/internal/api/files.go and the Markdown editor). Prevents a model
-// from dropping a .sh or a .exe into the workspace that is served to the browser.
-var allowedWriteExts = map[string]bool{".md": true, ".json": true, ".txt": true}
+// allowedFileExts restricts the file types the tools may touch — on READ as well
+// as on write. The write side keeps a model from dropping a .sh or a .exe into
+// the workspace that is then served to the browser (see
+// backend/internal/api/files.go and the Markdown editor); the read side keeps
+// anything an operator happened to leave in the PVC (a dotfile, a dump, an
+// export) from being shipped to the gateway just because the model guessed a
+// name.
+var allowedFileExts = map[string]bool{".md": true, ".json": true, ".txt": true}
 
 // hermesFileTools is the tool table declared to Hermes so Lya can ask the
 // backend for a file instead of relying on the frontend inlining it (see
@@ -248,7 +263,7 @@ var hermesFileTools = []map[string]interface{}{
 		"type": "function",
 		"function": map[string]interface{}{
 			"name":        "read_file",
-			"description": "Lit un fichier du dossier de travail de l'enseignant et renvoie son contenu. Utilise cet outil avant de modifier un fichier existant, pour travailler sur le contenu réel. Le contenu peut être tronqué s'il est très long : dans ce cas une note explicite le signale à la fin du texte renvoyé.",
+			"description": "Lit un fichier du dossier de travail de l'enseignant et renvoie son contenu. Utilise cet outil avant de modifier un fichier existant, pour travailler sur le contenu réel. Le contenu peut être tronqué s'il est très long : dans ce cas une note explicite le signale à la fin du texte renvoyé. Extensions lisibles : .md, .json, .txt.",
 			"parameters": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -265,7 +280,7 @@ var hermesFileTools = []map[string]interface{}{
 		"type": "function",
 		"function": map[string]interface{}{
 			"name":        "write_file",
-			"description": "Écrit un fichier dans le dossier de travail de l'enseignant, en le créant s'il n'existe pas. Le contenu fourni remplace intégralement l'ancien : pour une retouche ciblée sur un fichier existant, utilise plutôt patch_file. Extensions autorisées : .md, .json, .txt.",
+			"description": "Écrit un fichier dans le dossier de travail de l'enseignant, en le créant s'il n'existe pas. Le contenu fourni remplace intégralement l'ancien : pour une retouche ciblée sur un fichier existant, utilise plutôt patch_file. Un fichier existant plus long que ce que read_file peut renvoyer en entier ne peut pas être raccourci par cet outil : utilise patch_file. Extensions autorisées : .md, .json, .txt.",
 			"parameters": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -311,32 +326,64 @@ var hermesFileTools = []map[string]interface{}{
 
 // Desk sub-modes. In "insert" Lya only answers in the chat and the teacher
 // inserts what they keep by hand; in "direct" Lya updates the working file
-// herself through the file tools.
+// herself through the file tools. "legacy" is neither: it is what an absent or
+// unrecognised field resolves to, i.e. a client that predates the selector.
 const (
 	deskModeInsert = "insert"
 	deskModeDirect = "direct"
+	deskModeLegacy = "legacy"
 )
 
 // normalizeDeskMode resolves the sub-mode sent by the frontend.
 //
-// An absent or unrecognised value resolves to "direct", NOT to "insert": a
-// deployed frontend that does not know the field yet (and the v1.9.x
-// behaviour it was released with) would otherwise silently stop writing
-// files, with no error anywhere to explain why. Refusing to write is a
-// visible-looking success, which is the worst failure mode here.
+// Three states, not two, because "absent" and "insert" must not be conflated
+// and neither may be treated as an opt-in to the file tools:
+//
+//   - "insert": the teacher explicitly asked for copie/insertion — nothing is
+//     ever written, not even by a v1.9.0 progress frame.
+//   - "direct": the teacher explicitly asked Lya to edit the working file — the
+//     only value that arms read_file/write_file/patch_file.
+//   - anything else (absent, empty, misspelled): "legacy". A deployed frontend
+//     that does not know the field yet keeps the exact v1.9.x behaviour (the
+//     opportunistic write interception), but does NOT get the much stronger new
+//     tools it never opted into. Defaulting a typo into full write access is the
+//     kind of fail-open nobody notices until a course file is overwritten.
 func normalizeDeskMode(deskMode string) string {
-	if strings.ToLower(strings.TrimSpace(deskMode)) == deskModeInsert {
+	switch strings.ToLower(strings.TrimSpace(deskMode)) {
+	case deskModeInsert:
 		return deskModeInsert
+	case deskModeDirect:
+		return deskModeDirect
+	default:
+		return deskModeLegacy
 	}
-	return deskModeDirect
 }
 
 // fileToolsEnabled is the single gate for declaring AND executing the local file
 // tools. Kept in one place on purpose: the Desk sub-mode toggle (copie/insertion
 // vs mise à jour directe) narrows the same condition, and a gate scattered
 // across the SSE loop is how mode Lya ends up writing files by accident.
+//
+// Requires an explicit "direct": see normalizeDeskMode for why an absent field
+// is not enough.
 func (b *HermesBridge) fileToolsEnabled(mode, deskMode string) bool {
 	return mode == "desk" && normalizeDeskMode(deskMode) == deskModeDirect && b.workDir != ""
+}
+
+// legacyWritesEnabled gates the v1.9.0 opportunistic write interception on
+// `event: hermes.tool.progress` frames (see handleToolFileWrite).
+//
+// Wider than fileToolsEnabled by exactly one case, deskModeLegacy: a frontend
+// that never sends deskMode keeps writing files as it did in v1.9.x, so
+// upgrading the backend alone changes nothing for it. "insert" still blocks it —
+// a teacher who asked for copie/insertion must not have a file mutated by a
+// write-flavoured progress frame.
+func (b *HermesBridge) legacyWritesEnabled(mode, deskMode string) bool {
+	if mode != "desk" || b.workDir == "" {
+		return false
+	}
+	sub := normalizeDeskMode(deskMode)
+	return sub == deskModeDirect || sub == deskModeLegacy
 }
 
 // fileToolArgs is the union of the arguments of the three tools. A single struct
@@ -348,11 +395,11 @@ type fileToolArgs struct {
 	NewString string `json:"new_string"`
 }
 
-// checkWriteExt rejects extensions outside allowedWriteExts.
-func checkWriteExt(relPath string) error {
+// checkFileExt rejects extensions outside allowedFileExts.
+func checkFileExt(relPath string) error {
 	ext := strings.ToLower(filepath.Ext(relPath))
-	if !allowedWriteExts[ext] {
-		return fmt.Errorf("extension %q non autorisée pour %s : seuls .md, .json et .txt peuvent être écrits", ext, relPath)
+	if !allowedFileExts[ext] {
+		return fmt.Errorf("extension %q non autorisée pour %s : seuls les fichiers .md, .json et .txt sont accessibles", ext, relPath)
 	}
 	return nil
 }
@@ -367,6 +414,11 @@ func (b *HermesBridge) readFileTool(args fileToolArgs) (string, string, error) {
 	abs, err := b.safePath(args.Path)
 	if err != nil {
 		return "", "", fmt.Errorf("chemin refusé : %s est en dehors du dossier de travail", args.Path)
+	}
+	// Reads are filtered like writes: staying inside the workspace is not enough,
+	// since everything read here leaves the pod for the gateway.
+	if err := checkFileExt(args.Path); err != nil {
+		return "", "", err
 	}
 	raw, err := os.ReadFile(abs)
 	if err != nil {
@@ -390,8 +442,20 @@ func (b *HermesBridge) writeFileTool(args fileToolArgs) (string, string, error) 
 	if err != nil {
 		return "", "", fmt.Errorf("chemin refusé : %s est en dehors du dossier de travail", args.Path)
 	}
-	if err := checkWriteExt(args.Path); err != nil {
+	if err := checkFileExt(args.Path); err != nil {
 		return "", "", err
+	}
+	if n := len([]rune(args.Content)); n > maxWriteFileChars {
+		return "", "", fmt.Errorf("contenu trop long pour %s : %d caractères pour un maximum de %d. Découpe la modification et utilise patch_file", args.Path, n, maxWriteFileChars)
+	}
+	// A file longer than what read_file returns whole can only have been seen
+	// truncated, so a shorter rewrite means the tail is being dropped. The
+	// truncation notice returned by read_file asks the model not to do this, but a
+	// notice is not a guard: refuse, and say what to use instead.
+	if existing, err := os.ReadFile(abs); err == nil {
+		if oldLen := len([]rune(string(existing))); oldLen > maxReadFileChars && len([]rune(args.Content)) < oldLen {
+			return "", "", fmt.Errorf("réécriture refusée pour %s : le fichier fait %d caractères, tu n'en as vu que les %d premiers et le contenu proposé est plus court. Modifie-le avec patch_file", args.Path, oldLen, maxReadFileChars)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
 		return "", "", fmt.Errorf("création du dossier parent impossible pour %s : %v", args.Path, err)
@@ -414,7 +478,7 @@ func (b *HermesBridge) patchFileTool(args fileToolArgs) (string, string, error) 
 	if err != nil {
 		return "", "", fmt.Errorf("chemin refusé : %s est en dehors du dossier de travail", args.Path)
 	}
-	if err := checkWriteExt(args.Path); err != nil {
+	if err := checkFileExt(args.Path); err != nil {
 		return "", "", err
 	}
 	if args.OldString == "" {
@@ -674,7 +738,7 @@ func (b *HermesBridge) startJob(content, systemPrompt, currentFile, mode, deskMo
 			mode = "desk"
 		}
 		deskMode = normalizeDeskMode(deskMode)
-		err := b.callHermesStream(ctx, job, content, systemPrompt, mode, deskMode)
+		err := b.callHermesStream(ctx, job, content, systemPrompt, currentFile, mode, deskMode)
 		durationMs := time.Since(start).Milliseconds()
 		status := "done"
 		if job.status == JobRunning {
@@ -715,9 +779,13 @@ func (b *HermesBridge) startJob(content, systemPrompt, currentFile, mode, deskMo
 // text only (or maxToolLoops is reached).
 //
 // mode and deskMode control file access: only mode "desk" in the "direct"
-// sub-mode declares and executes the file tools, and only that combination
-// writes files from hermes.tool.progress frames. See fileToolsEnabled.
-func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, systemPrompt, mode, deskMode string) error {
+// sub-mode declares and executes the file tools. See fileToolsEnabled and
+// legacyWritesEnabled.
+//
+// currentFile is the file the Desk panel announces as the working file. It is
+// not a jail (creating a companion file is legitimate), but a write elsewhere is
+// flagged to the teacher and to the model, because the UI promises one file.
+func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, systemPrompt, currentFile, mode, deskMode string) error {
 	messages := []map[string]interface{}{}
 	if systemPrompt != "" {
 		messages = append(messages, map[string]interface{}{"role": "system", "content": systemPrompt})
@@ -734,6 +802,11 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 		loops         int
 		toolCallCount int
 		sawToolCalls  bool
+		// Characters of tool results already fed back, for maxToolResultChars.
+		toolResultChars int
+		// At least one tool actually modified a file, so an interrupted loop must
+		// tell the teacher the workspace is already in an intermediate state.
+		wroteFiles bool
 	)
 	// deskMode is part of the line so 'no tool calls because Hermes ignores the
 	// tools parameter' cannot be confused with 'no tool calls because the teacher
@@ -808,38 +881,36 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 		for _, tc := range turn.toolCalls {
 			toolCallCount++
 			rawArgs := tc.args.String()
+			path := pathFromRawArgs(rawArgs)
+			// A write outside the file the Desk panel names. Not refused — asking
+			// Lya to create a companion file is legitimate — but never silent: the
+			// UI promises one working file, so the teacher gets the deviation in the
+			// thread and the model gets it in the tool result.
+			outside := outsideWorkingFile(tc.name, path, currentFile)
 			// Report before executing so the teacher sees the action live, even if
 			// the tool is slow or fails.
-			job.append(StreamEvent{Type: "tool", Tool: map[string]interface{}{
-				"name":   tc.name,
-				"path":   pathFromRawArgs(rawArgs),
-				"status": "running",
-			}})
+			job.append(StreamEvent{Type: "tool", Tool: toolEventPayload(tc.name, path, "running", "", outside)})
 
 			result, changedPath, execErr := b.execFileTool(tc.name, rawArgs)
 			if execErr != nil {
-				log.Printf("hermes: tool %s path=%q failed: %v", tc.name, pathFromRawArgs(rawArgs), execErr)
-				job.append(StreamEvent{Type: "tool", Tool: map[string]interface{}{
-					"name":   tc.name,
-					"path":   pathFromRawArgs(rawArgs),
-					"status": "error",
-					"error":  execErr.Error(),
-				}})
+				log.Printf("hermes: tool %s path=%q failed: %v", tc.name, path, execErr)
+				job.append(StreamEvent{Type: "tool", Tool: toolEventPayload(tc.name, path, "error", execErr.Error(), outside)})
 				messages = append(messages, map[string]interface{}{
 					"role":         "tool",
 					"tool_call_id": tc.id,
-					"content":      "Erreur : " + execErr.Error(),
+					"content":      budgetToolResult("Erreur : "+execErr.Error(), &toolResultChars),
 				})
 				continue
 			}
 
-			log.Printf("hermes: tool %s path=%q ok (%d chars returned)", tc.name, pathFromRawArgs(rawArgs), len(result))
-			job.append(StreamEvent{Type: "tool", Tool: map[string]interface{}{
-				"name":   tc.name,
-				"path":   pathFromRawArgs(rawArgs),
-				"status": "done",
-			}})
+			log.Printf("hermes: tool %s path=%q ok (%d chars returned)", tc.name, path, len(result))
+			if outside {
+				log.Printf("hermes: tool %s wrote %q, outside the announced working file %q", tc.name, path, currentFile)
+				result += fmt.Sprintf("\n\nAttention : le fichier de travail de l'enseignant est %s, et tu viens de modifier %s. Dis-le explicitement dans ta réponse.", currentFile, path)
+			}
+			job.append(StreamEvent{Type: "tool", Tool: toolEventPayload(tc.name, path, "done", "", outside)})
 			if changedPath != "" {
+				wroteFiles = true
 				// Same synthetic shape as the v1.9.0 write interception, so
 				// Chat.tsx reloads the editor without any frontend change.
 				job.append(StreamEvent{Type: "tool", Tool: map[string]interface{}{
@@ -850,7 +921,7 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 			messages = append(messages, map[string]interface{}{
 				"role":         "tool",
 				"tool_call_id": tc.id,
-				"content":      result,
+				"content":      budgetToolResult(result, &toolResultChars),
 			})
 		}
 	}
@@ -858,7 +929,13 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 	// Loop cap reached and the model still wants tools: stop here rather than let
 	// the job spin until jobRunTimeout with nothing shown to the teacher.
 	loops = maxToolLoops
+	// The tools of the last iteration DID run, so files may already be modified.
+	// Saying only "interrompue" reads like an abort and sent teachers looking for
+	// an unchanged file that had in fact been rewritten.
 	cut := fmt.Sprintf("\n\n_(Boucle d'outils interrompue après %d échanges. Relance la demande en la découpant en étapes plus petites.)_", maxToolLoops)
+	if wroteFiles {
+		cut = fmt.Sprintf("\n\n_(Boucle d'outils interrompue après %d échanges. Les modifications déjà écrites dans tes fichiers sont conservées : vérifie ton fichier de travail avant de relancer la demande, découpée en étapes plus petites.)_", maxToolLoops)
+	}
 	full.WriteString(cut)
 	job.append(StreamEvent{Type: "delta", Text: cut})
 	job.append(StreamEvent{Type: "done", Reply: full.String()})
@@ -874,6 +951,68 @@ func pathFromRawArgs(rawArgs string) string {
 		return ""
 	}
 	return args.Path
+}
+
+// toolEventPayload builds the tool event sent to the frontend.
+//
+// status and error are both carried: a refused write is a normal outcome here
+// (missing old_string, rejected extension, path outside the workspace), and
+// without the error the chat would show it with the same "✏️ Écriture de …"
+// label as a successful one. Optional fields are omitted rather than sent empty,
+// so normalizeTool in frontend/src/tools.ts sees the same shape as before.
+func toolEventPayload(name, path, status, errMsg string, outsideWorkingFile bool) map[string]interface{} {
+	payload := map[string]interface{}{
+		"name":   name,
+		"path":   path,
+		"status": status,
+	}
+	if errMsg != "" {
+		payload["error"] = errMsg
+	}
+	if outsideWorkingFile {
+		payload["outsideWorkingFile"] = true
+	}
+	return payload
+}
+
+// outsideWorkingFile reports a write landing somewhere else than the file the
+// Desk panel announces as the working file.
+//
+// Only meaningful for writes, and only when a working file is known: reads are
+// harmless anywhere in the workspace, and with no file open there is nothing to
+// deviate from.
+func outsideWorkingFile(toolName, path, currentFile string) bool {
+	if currentFile == "" || path == "" {
+		return false
+	}
+	if toolName != "write_file" && toolName != "patch_file" {
+		return false
+	}
+	return filepath.Clean(path) != filepath.Clean(currentFile)
+}
+
+// budgetToolResult caps the CUMULATIVE size of the tool results fed back to
+// Hermes at maxToolResultChars, updating used in place.
+//
+// Each result stays in `messages` for the rest of the job, so over up to
+// maxToolLoops round-trips a couple of large read_file results are enough to
+// overflow the upstream context window. That arrives as a gateway 4xx, i.e. as
+// "Échec IA. Réessaie." for the teacher, with the work of the previous turns
+// lost. A cut result is something the model can still work with, and the notice
+// tells it what to do instead of asking for the file again.
+func budgetToolResult(result string, used *int) string {
+	remaining := maxToolResultChars - *used
+	if remaining <= 0 {
+		return "[Résultat non transmis : le budget de contexte des outils est épuisé pour cette conversation. Termine avec ce que tu as déjà lu, ou demande à l'enseignant de relancer la demande découpée en étapes.]"
+	}
+	runes := []rune(result)
+	if len(runes) <= remaining {
+		*used += len(runes)
+		return result
+	}
+	*used = maxToolResultChars
+	return string(runes[:remaining]) +
+		"\n\n[…coupé : budget de contexte des outils atteint. Ne réécris pas ce fichier en entier à partir de cet extrait, utilise patch_file.]"
 }
 
 // postHermesStream does POST /v1/chat/completions with stream:true and maps
@@ -928,10 +1067,11 @@ type toolCallAccum struct {
 
 // turnResult is what a single Hermes response (one SSE stream) produced.
 type turnResult struct {
-	text      string           // text streamed during this turn only
-	toolCalls []*toolCallAccum // in tool_call index order, empty for a text answer
-	sawDone   bool             // the stream ended with data: [DONE]
-	stopped   bool             // chunk.error surfaced: the job must stop, error already emitted
+	text         string           // text streamed during this turn only
+	toolCalls    []*toolCallAccum // in tool_call index order, empty for a text answer
+	sawDone      bool             // the stream ended with data: [DONE]
+	stopped      bool             // chunk.error surfaced: the job must stop, error already emitted
+	finishReason string           // last non-empty finish_reason: "tool_calls", "stop", "length"…
 }
 
 // streamTurn consumes one SSE stream. It forwards deltas and hermes.tool.progress
@@ -983,10 +1123,11 @@ func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode, deskMode strin
 
 			// If this is a file-write tool with status "done", write file to disk
 			// and emit a file_changed event (like PiBridge does).
-			// Same gate as the tool loop: mode Lya must never write, and neither
-			// must the copie/insertion sub-mode — otherwise a write-flavoured
-			// progress frame would mutate a file the teacher asked to keep intact.
-			if b.fileToolsEnabled(mode, deskMode) {
+			// mode Lya must never write, and neither must the copie/insertion
+			// sub-mode — otherwise a write-flavoured progress frame would mutate a
+			// file the teacher asked to keep intact. A client that sends no
+			// deskMode at all keeps this v1.9.x path: see legacyWritesEnabled.
+			if b.legacyWritesEnabled(mode, deskMode) {
 				if toolMap, ok := tool.(map[string]interface{}); ok {
 					if relPath := b.handleToolFileWrite(toolMap); relPath != "" {
 						job.append(StreamEvent{
@@ -1032,6 +1173,9 @@ func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode, deskMode strin
 			return res, nil
 		}
 		if len(chunk.Choices) > 0 {
+			if fr := chunk.Choices[0].FinishReason; fr != "" {
+				res.finishReason = fr
+			}
 			text := chunk.Choices[0].Delta.Content
 			if text != "" {
 				turnText.WriteString(text)
@@ -1070,6 +1214,17 @@ func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode, deskMode strin
 		acc := byIndex[idx]
 		if acc.name == "" {
 			continue // an arguments-only fragment with no name is not callable
+		}
+		// Cross-check finish_reason instead of trusting the surviving accumulators
+		// alone: a gateway that streams a tool_calls delta and then finishes on
+		// "stop" or "length" left us a fragment, and executing a write with
+		// half-decoded arguments is worse than not writing at all. Arguments that
+		// do decode are still executed whatever the finish reason — some gateways
+		// report "stop" even for a complete tool call.
+		if res.finishReason != "" && res.finishReason != "tool_calls" && !json.Valid([]byte(acc.args.String())) {
+			log.Printf("hermes: dropping incomplete tool call %q (finish_reason=%s, args=%q)",
+				acc.name, res.finishReason, truncateStr(acc.args.String(), 120))
+			continue
 		}
 		if acc.id == "" {
 			// Some gateways omit the id. The tool result message MUST carry a

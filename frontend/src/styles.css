@@ -659,8 +659,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
+  padding: 8px 16px 4px;
 }
 
 .chat-submode-label {
@@ -697,6 +696,17 @@ body {
   background: var(--bg-primary);
   color: var(--accent);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* What the selected sub-mode actually does. Rendered rather than left as a
+   tooltip: on a touch screen a title attribute is unreachable, and this is where
+   a teacher who lost the v1.9.1 file writes finds the toggle. */
+.chat-submode-hint {
+  padding: 0 16px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
 }
 
 /* Working file targeted by the direct sub-mode. Deliberately loud: it is the

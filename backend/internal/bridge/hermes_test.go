@@ -491,6 +491,14 @@ type scriptedToolCall struct {
 type scriptedTurn struct {
 	text      string
 	toolCalls []scriptedToolCall
+	// finishReason overrides the finish_reason of the closing chunk. Empty means
+	// "tool_calls" for a tool turn and "stop" for a text turn. Setting "stop" or
+	// "length" on a tool turn mimics a gateway that streamed a tool_calls delta
+	// and then gave up in the middle of the arguments.
+	finishReason string
+	// errorMessage makes the turn stream a {"error":{...}} chunk instead of an
+	// answer, the way Hermes reports an upstream failure mid-stream.
+	errorMessage string
 }
 
 // scriptedHermes serves one scripted turn per request and records every decoded
@@ -543,6 +551,15 @@ func (s *scriptedHermes) handle(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
 	flusher, _ := w.(http.Flusher)
 
+	if turn.errorMessage != "" {
+		sseData(w, flusher, map[string]interface{}{
+			"error": map[string]interface{}{"message": turn.errorMessage},
+		})
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		flusher.Flush()
+		return
+	}
+
 	if len(turn.toolCalls) > 0 {
 		for i, tc := range turn.toolCalls {
 			// Arguments are deliberately split in two fragments: a real gateway
@@ -563,7 +580,7 @@ func (s *scriptedHermes) handle(w http.ResponseWriter, r *http.Request) {
 			}}})
 		}
 		sseData(w, flusher, map[string]interface{}{"choices": []interface{}{map[string]interface{}{
-			"delta": map[string]interface{}{}, "finish_reason": "tool_calls",
+			"delta": map[string]interface{}{}, "finish_reason": orDefault(turn.finishReason, "tool_calls"),
 		}}})
 	} else {
 		// Two deltas, to prove text is streamed and accumulated as before.
@@ -576,12 +593,19 @@ func (s *scriptedHermes) handle(w http.ResponseWriter, r *http.Request) {
 			}}})
 		}
 		sseData(w, flusher, map[string]interface{}{"choices": []interface{}{map[string]interface{}{
-			"delta": map[string]interface{}{}, "finish_reason": "stop",
+			"delta": map[string]interface{}{}, "finish_reason": orDefault(turn.finishReason, "stop"),
 		}}})
 	}
 
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
+}
+
+func orDefault(v, fallback string) string {
+	if v == "" {
+		return fallback
+	}
+	return v
 }
 
 func sseData(w http.ResponseWriter, flusher http.Flusher, payload map[string]interface{}) {
@@ -607,16 +631,31 @@ func (s *scriptedHermes) request(t *testing.T, i int) map[string]interface{} {
 }
 
 // runHermesJob drives one prompt through the WebSocket and returns every event.
-// It sends NO deskMode field, which is exactly what an old frontend does: these
-// tests therefore also guard the backward-compatible default.
+// It sends NO deskMode field, which is exactly what a frontend predating the
+// sub-mode selector does: these tests therefore guard the "legacy" sub-mode,
+// where the v1.9.0 write interception still applies but no file tool is armed.
 func runHermesJob(t *testing.T, b *HermesBridge, prompt, mode string) []StreamEvent {
 	t.Helper()
 	return runHermesJobSub(t, b, prompt, mode, "")
 }
 
+// runDeskDirectJob drives one prompt in mode desk, sub-mode direct: the only
+// combination in which the file tools are declared and executed.
+func runDeskDirectJob(t *testing.T, b *HermesBridge, prompt string) []StreamEvent {
+	t.Helper()
+	return runHermesJobSub(t, b, prompt, "desk", deskModeDirect)
+}
+
 // runHermesJobSub is runHermesJob with an explicit Desk sub-mode. An empty
 // deskMode omits the field from the payload rather than sending "".
 func runHermesJobSub(t *testing.T, b *HermesBridge, prompt, mode, deskMode string) []StreamEvent {
+	t.Helper()
+	return runHermesJobFile(t, b, prompt, mode, deskMode, "")
+}
+
+// runHermesJobFile is runHermesJobSub with the working file the Desk panel
+// announces (the currentFile field of the prompt message).
+func runHermesJobFile(t *testing.T, b *HermesBridge, prompt, mode, deskMode, currentFile string) []StreamEvent {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(b.HandleWebSocket))
 	defer server.Close()
@@ -631,6 +670,9 @@ func runHermesJobSub(t *testing.T, b *HermesBridge, prompt, mode, deskMode strin
 	payload := map[string]string{"type": "prompt", "content": prompt, "mode": mode}
 	if deskMode != "" {
 		payload["deskMode"] = deskMode
+	}
+	if currentFile != "" {
+		payload["currentFile"] = currentFile
 	}
 	msg, _ := json.Marshal(payload)
 	ws.WriteMessage(websocket.TextMessage, msg)
@@ -717,6 +759,59 @@ func toolEventNames(events []StreamEvent) []string {
 	return names
 }
 
+// hasOutsideWorkingFileEvent reports whether any tool event was flagged as
+// touching a file other than the one the Desk panel announces.
+func hasOutsideWorkingFileEvent(events []StreamEvent) bool {
+	for _, ev := range events {
+		if ev.Type != "tool" {
+			continue
+		}
+		if m, ok := ev.Tool.(map[string]interface{}); ok {
+			if flagged, _ := m["outsideWorkingFile"].(bool); flagged {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// toolCallIDs returns the tool_call_id of every role:"tool" message, in order.
+func toolCallIDs(t *testing.T, req map[string]interface{}) []string {
+	t.Helper()
+	raw, _ := req["messages"].([]interface{})
+	var out []string
+	for _, m := range raw {
+		msg, ok := m.(map[string]interface{})
+		if !ok || msg["role"] != "tool" {
+			continue
+		}
+		id, _ := msg["tool_call_id"].(string)
+		out = append(out, id)
+	}
+	return out
+}
+
+// assistantToolCallIDs returns the ids declared in the assistant tool_calls
+// messages, in order.
+func assistantToolCallIDs(t *testing.T, req map[string]interface{}) []string {
+	t.Helper()
+	raw, _ := req["messages"].([]interface{})
+	var out []string
+	for _, m := range raw {
+		msg, ok := m.(map[string]interface{})
+		if !ok || msg["role"] != "assistant" {
+			continue
+		}
+		calls, _ := msg["tool_calls"].([]interface{})
+		for _, c := range calls {
+			call, _ := c.(map[string]interface{})
+			id, _ := call["id"].(string)
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func hasFileChanged(events []StreamEvent, path string) bool {
 	for _, ev := range events {
 		if ev.Type != "tool" {
@@ -764,7 +859,7 @@ func TestHermesBridge_ToolLoop_ReadFile(t *testing.T) {
 	defer hermes.Close()
 
 	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
-	events := runHermesJob(t, b, "Lis B1/unite1.md", "desk")
+	events := runDeskDirectJob(t, b, "Lis B1/unite1.md")
 
 	assertNoErrorEvent(t, events)
 	if got := hermes.requestCount(); got != 2 {
@@ -820,7 +915,7 @@ func TestHermesBridge_ToolLoop_ReadFileTruncated(t *testing.T) {
 	defer hermes.Close()
 
 	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
-	events := runHermesJob(t, b, "Lis long.md", "desk")
+	events := runDeskDirectJob(t, b, "Lis long.md")
 	assertNoErrorEvent(t, events)
 	doneEvent(t, events)
 
@@ -847,7 +942,7 @@ func TestHermesBridge_ToolLoop_WriteFile(t *testing.T) {
 	defer hermes.Close()
 
 	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
-	events := runHermesJob(t, b, "Crée B1/nouveau.md", "desk")
+	events := runDeskDirectJob(t, b, "Crée B1/nouveau.md")
 
 	assertNoErrorEvent(t, events)
 	doneEvent(t, events)
@@ -879,7 +974,7 @@ func TestHermesBridge_ToolLoop_PatchFile(t *testing.T) {
 	defer hermes.Close()
 
 	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
-	events := runHermesJob(t, b, "Complète le vocabulaire", "desk")
+	events := runDeskDirectJob(t, b, "Complète le vocabulaire")
 
 	assertNoErrorEvent(t, events)
 	doneEvent(t, events)
@@ -912,7 +1007,7 @@ func TestHermesBridge_ToolLoop_PatchFileNotFound(t *testing.T) {
 	defer hermes.Close()
 
 	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
-	events := runHermesJob(t, b, "Patch impossible", "desk")
+	events := runDeskDirectJob(t, b, "Patch impossible")
 
 	assertNoErrorEvent(t, events)
 	doneEvent(t, events)
@@ -945,7 +1040,7 @@ func TestHermesBridge_ToolLoop_PatchFileAmbiguous(t *testing.T) {
 	defer hermes.Close()
 
 	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
-	events := runHermesJob(t, b, "Remplace TODO", "desk")
+	events := runDeskDirectJob(t, b, "Remplace TODO")
 
 	assertNoErrorEvent(t, events)
 	doneEvent(t, events)
@@ -984,7 +1079,7 @@ func TestHermesBridge_ToolLoop_PathTraversalRejected(t *testing.T) {
 			defer hermes.Close()
 
 			b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
-			events := runHermesJob(t, b, "Sors du dossier", "desk")
+			events := runDeskDirectJob(t, b, "Sors du dossier")
 
 			assertNoErrorEvent(t, events)
 			doneEvent(t, events)
@@ -1022,7 +1117,7 @@ func TestHermesBridge_ToolLoop_ExtensionRejected(t *testing.T) {
 			defer hermes.Close()
 
 			b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
-			events := runHermesJob(t, b, "Écris un script", "desk")
+			events := runDeskDirectJob(t, b, "Écris un script")
 
 			assertNoErrorEvent(t, events)
 			doneEvent(t, events)
@@ -1051,7 +1146,7 @@ func TestHermesBridge_ToolLoop_LoopCap(t *testing.T) {
 	defer hermes.Close()
 
 	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
-	events := runHermesJob(t, b, "Boucle", "desk")
+	events := runDeskDirectJob(t, b, "Boucle")
 
 	assertNoErrorEvent(t, events)
 	done := doneEvent(t, events)
@@ -1114,7 +1209,7 @@ func TestHermesBridge_ToolLoop_DegradesWhenToolsIgnored(t *testing.T) {
 	defer hermes.Close()
 
 	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
-	events := runHermesJob(t, b, "Bonjour", "desk")
+	events := runDeskDirectJob(t, b, "Bonjour")
 
 	assertNoErrorEvent(t, events)
 	if got := hermes.requestCount(); got != 1 {
@@ -1256,16 +1351,17 @@ func TestHermesBridge_ToolLoop_DirectSubModeWrites(t *testing.T) {
 	}
 }
 
-// TestHermesBridge_ToolLoop_AbsentSubModeIsDirect pins the backward-compatible
-// default: a frontend that predates the sub-mode selector sends no deskMode and
-// must keep the v1.9.x behaviour instead of silently losing file writes.
-func TestHermesBridge_ToolLoop_AbsentSubModeIsDirect(t *testing.T) {
+// TestHermesBridge_ToolLoop_AbsentSubModeArmsNoTools pins the middle ground for a
+// frontend that predates the sub-mode selector: it keeps the v1.9.0 write
+// interception (TestHermesBridge_FileWrite, which sends no deskMode either) but
+// gets no file tool armed, because it never opted into one.
+func TestHermesBridge_ToolLoop_AbsentSubModeArmsNoTools(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	hermes := newScriptedHermes([]scriptedTurn{
 		{toolCalls: []scriptedToolCall{{id: "call_1", name: "write_file",
 			arguments: `{"path":"legacy.md","content":"# Legacy"}`}}},
-		{text: "C'est écrit."},
+		{text: "Ne devrait pas arriver."},
 	}, false)
 	defer hermes.Close()
 
@@ -1275,14 +1371,14 @@ func TestHermesBridge_ToolLoop_AbsentSubModeIsDirect(t *testing.T) {
 	assertNoErrorEvent(t, events)
 	doneEvent(t, events)
 
-	if names := declaredToolNames(t, hermes.request(t, 0)); len(names) != 3 {
-		t.Errorf("expected the three tools to be declared without deskMode, got %v", names)
+	if _, ok := hermes.request(t, 0)["tools"]; ok {
+		t.Error("no deskMode field must not declare any tool")
 	}
-	if _, err := os.ReadFile(filepath.Join(tmpDir, "legacy.md")); err != nil {
-		t.Fatalf("expected the file to be written without deskMode: %v", err)
+	if got := hermes.requestCount(); got != 1 {
+		t.Errorf("expected a single request without deskMode, got %d", got)
 	}
-	if !hasFileChanged(events, "legacy.md") {
-		t.Errorf("expected a file_changed tool event, got %v", toolEventNames(events))
+	if _, err := os.Stat(filepath.Join(tmpDir, "legacy.md")); err == nil {
+		t.Error("an unsolicited tool call must not write a file without an explicit direct sub-mode")
 	}
 }
 
@@ -1292,12 +1388,470 @@ func TestNormalizeDeskMode(t *testing.T) {
 		"INSERT":   deskModeInsert,
 		" insert ": deskModeInsert,
 		"direct":   deskModeDirect,
-		"":         deskModeDirect, // absent field
-		"garbage":  deskModeDirect, // unknown value must not disable writes silently
+		" DIRECT ": deskModeDirect,
+		"":         deskModeLegacy, // absent field: v1.9.x behaviour, no new tools
+		"garbage":  deskModeLegacy, // a typo must never arm the write tools
 	}
 	for in, want := range cases {
 		if got := normalizeDeskMode(in); got != want {
 			t.Errorf("normalizeDeskMode(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestFileToolGates(t *testing.T) {
+	b := NewHermesBridge("http://example.invalid", "k", "/tmp/workspace")
+	cases := []struct {
+		mode, deskMode        string
+		wantTools, wantLegacy bool
+	}{
+		{"desk", "direct", true, true},
+		{"desk", "insert", false, false},
+		{"desk", "", false, true},        // legacy client: v1.9.0 interception only
+		{"desk", "garbage", false, true}, // same, a typo is not an opt-in
+		{"lya", "direct", false, false},  // mode Lya never touches files
+		{"pi", "direct", false, false},
+	}
+	for _, tc := range cases {
+		if got := b.fileToolsEnabled(tc.mode, tc.deskMode); got != tc.wantTools {
+			t.Errorf("fileToolsEnabled(%q, %q) = %v, want %v", tc.mode, tc.deskMode, got, tc.wantTools)
+		}
+		if got := b.legacyWritesEnabled(tc.mode, tc.deskMode); got != tc.wantLegacy {
+			t.Errorf("legacyWritesEnabled(%q, %q) = %v, want %v", tc.mode, tc.deskMode, got, tc.wantLegacy)
+		}
+	}
+
+	// No workspace mounted: nothing may be written, whatever the sub-mode.
+	noWorkDir := NewHermesBridge("http://example.invalid", "k", "")
+	if noWorkDir.fileToolsEnabled("desk", "direct") || noWorkDir.legacyWritesEnabled("desk", "direct") {
+		t.Error("no workDir must disable both the file tools and the legacy write path")
+	}
+}
+
+// --- Guards on what the tools may read, write and feed back ---
+
+func TestHermesBridge_ToolLoop_ReadExtensionRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	secret := "API_SERVER_KEY=super-secret\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, ".env"), []byte(secret), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "read_file", arguments: `{"path":".env"}`}}},
+		{text: "Je ne peux pas lire ce fichier."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runDeskDirectJob(t, b, "Lis .env")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	results := toolResultContents(t, hermes.request(t, 1))
+	if len(results) != 1 || !strings.Contains(results[0], "non autorisée") {
+		t.Fatalf("expected the read to be refused, got %v", results)
+	}
+	if strings.Contains(results[0], "super-secret") {
+		t.Error("the content of a non-allowlisted file must never reach the gateway")
+	}
+}
+
+func TestHermesBridge_ToolLoop_WriteTooLongRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	huge := strings.Repeat("é", maxWriteFileChars+1) // multi-byte on purpose
+	args, _ := json.Marshal(map[string]string{"path": "gros.md", "content": huge})
+
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "write_file", arguments: string(args)}}},
+		{text: "Trop long."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runDeskDirectJob(t, b, "Écris un énorme fichier")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	results := toolResultContents(t, hermes.request(t, 1))
+	if len(results) != 1 || !strings.Contains(results[0], "trop long") {
+		t.Fatalf("expected the oversized write to be refused, got %v", results)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "gros.md")); err == nil {
+		t.Error("an oversized write must not create the file")
+	}
+}
+
+// TestHermesBridge_ToolLoop_WriteRefusesTruncatedRewrite covers the file that
+// read_file could only return truncated: rewriting it whole from the excerpt
+// would silently drop everything past the cut.
+func TestHermesBridge_ToolLoop_WriteRefusesTruncatedRewrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	original := strings.Repeat("a", maxReadFileChars+500)
+	target := filepath.Join(tmpDir, "long.md")
+	if err := os.WriteFile(target, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(map[string]string{"path": "long.md", "content": strings.Repeat("a", 100)})
+
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "write_file", arguments: string(args)}}},
+		{text: "J'utilise patch_file."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runDeskDirectJob(t, b, "Réécris long.md")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	results := toolResultContents(t, hermes.request(t, 1))
+	if len(results) != 1 || !strings.Contains(results[0], "patch_file") {
+		t.Fatalf("expected the truncated rewrite to be refused with a patch_file hint, got %v", results)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != original {
+		t.Errorf("the file must be left untouched, got %d bytes instead of %d", len(data), len(original))
+	}
+}
+
+// TestHermesBridge_ToolLoop_ToolResultBudget: tool results accumulate in the
+// conversation for the whole job, so without a cumulative cap a few large reads
+// overflow the upstream context window and the teacher only sees "Échec IA".
+func TestHermesBridge_ToolLoop_ToolResultBudget(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Exactly at the read cap, so each result is returned whole and three of them
+	// consume the whole budget.
+	body := strings.Repeat("x", maxReadFileChars)
+	for _, name := range []string{"a.md", "b.md", "c.md", "d.md"} {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var turns []scriptedTurn
+	for _, name := range []string{"a.md", "b.md", "c.md", "d.md"} {
+		turns = append(turns, scriptedTurn{toolCalls: []scriptedToolCall{
+			{id: "call_" + name, name: "read_file", arguments: `{"path":"` + name + `"}`},
+		}})
+	}
+	turns = append(turns, scriptedTurn{text: "J'ai tout lu."})
+
+	hermes := newScriptedHermes(turns, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runDeskDirectJob(t, b, "Lis les quatre fichiers")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	results := toolResultContents(t, hermes.request(t, 4))
+	if len(results) != 4 {
+		t.Fatalf("expected 4 tool results in the last request, got %d", len(results))
+	}
+	total := 0
+	for _, r := range results {
+		total += len([]rune(r))
+	}
+	if total > maxToolResultChars+500 {
+		t.Errorf("cumulative tool results = %d runes, expected at most %d (+notice)", total, maxToolResultChars)
+	}
+	if !strings.Contains(results[3], "budget de contexte des outils") {
+		t.Errorf("expected the last result to say the budget is exhausted, got %q", truncateStr(results[3], 120))
+	}
+}
+
+// --- Working file announced by the Desk panel ---
+
+func TestHermesBridge_ToolLoop_WriteOutsideWorkingFileIsFlagged(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, "B1"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "write_file",
+			arguments: `{"path":"B1/autre.md","content":"# Ailleurs"}`}}},
+		{text: "J'ai écrit dans un autre fichier."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runHermesJobFile(t, b, "Complète mon cours", "desk", deskModeDirect, "B1/unite1.md")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	// Flagged, not refused: creating a companion file is legitimate.
+	if _, err := os.ReadFile(filepath.Join(tmpDir, "B1", "autre.md")); err != nil {
+		t.Fatalf("expected the write to still happen: %v", err)
+	}
+	if !hasOutsideWorkingFileEvent(events) {
+		t.Errorf("expected a tool event flagged outsideWorkingFile, got %v", toolEventNames(events))
+	}
+	results := toolResultContents(t, hermes.request(t, 1))
+	if len(results) != 1 || !strings.Contains(results[0], "B1/unite1.md") {
+		t.Errorf("expected the model to be told which file was the working file, got %v", results)
+	}
+}
+
+func TestHermesBridge_ToolLoop_WriteOnWorkingFileIsNotFlagged(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, "B1"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "write_file",
+			arguments: `{"path":"B1/unite1.md","content":"# Unité 1"}`}}},
+		{text: "C'est fait."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runHermesJobFile(t, b, "Complète mon cours", "desk", deskModeDirect, "B1/unite1.md")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	if hasOutsideWorkingFileEvent(events) {
+		t.Error("a write on the announced working file must not be flagged")
+	}
+	results := toolResultContents(t, hermes.request(t, 1))
+	if len(results) != 1 || strings.Contains(results[0], "Attention") {
+		t.Errorf("expected a plain success result, got %v", results)
+	}
+}
+
+// --- Tool-call reassembly and dispatch edge cases ---
+
+func TestHermesBridge_ToolLoop_UnknownToolName(t *testing.T) {
+	tmpDir := t.TempDir()
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "delete_file",
+			arguments: `{"path":"a.md"}`}}},
+		{text: "Cet outil n'existe pas."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runDeskDirectJob(t, b, "Supprime a.md")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	results := toolResultContents(t, hermes.request(t, 1))
+	if len(results) != 1 || !strings.Contains(results[0], "outil inconnu") {
+		t.Fatalf("expected the unknown tool to be reported to the model, got %v", results)
+	}
+	if names := toolEventNames(events); len(names) == 0 || !strings.Contains(names[len(names)-1], ":error") {
+		t.Errorf("expected an error tool event, got %v", names)
+	}
+}
+
+// TestHermesBridge_ToolLoop_MalformedArguments: the arguments string is the one
+// part of a tool call a model routinely gets wrong. The failure must reach both
+// the model (so it can retry) and the thread (so the teacher is not left with a
+// status line that vanishes).
+func TestHermesBridge_ToolLoop_MalformedArguments(t *testing.T) {
+	tmpDir := t.TempDir()
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "write_file",
+			arguments: `{"path":"a.md","content":`}}},
+		{text: "Je recommence."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runDeskDirectJob(t, b, "Écris a.md")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	results := toolResultContents(t, hermes.request(t, 1))
+	if len(results) != 1 || !strings.Contains(results[0], "arguments JSON invalides") {
+		t.Fatalf("expected the malformed arguments to be reported to the model, got %v", results)
+	}
+	found := false
+	for _, ev := range events {
+		if ev.Type != "tool" {
+			continue
+		}
+		m, ok := ev.Tool.(map[string]interface{})
+		if ok && m["status"] == "error" && m["name"] == "write_file" && m["error"] != nil {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an error tool event carrying the failure, got %v", toolEventNames(events))
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "a.md")); err == nil {
+		t.Error("nothing must be written when the arguments cannot be decoded")
+	}
+}
+
+// TestHermesBridge_ToolLoop_IncompleteCallDroppedOnStop: a gateway that streams a
+// tool_calls delta and then finishes on "length" left us truncated arguments.
+// Executing them would write from half a payload.
+func TestHermesBridge_ToolLoop_IncompleteCallDroppedOnStop(t *testing.T) {
+	tmpDir := t.TempDir()
+	hermes := newScriptedHermes([]scriptedTurn{
+		{
+			toolCalls:    []scriptedToolCall{{id: "call_1", name: "write_file", arguments: `{"path":"a.md","content":"# Coup`}},
+			finishReason: "length",
+		},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runDeskDirectJob(t, b, "Écris a.md")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	if got := hermes.requestCount(); got != 1 {
+		t.Errorf("expected the incomplete call to be dropped without a follow-up request, got %d requests", got)
+	}
+	if names := toolEventNames(events); len(names) != 0 {
+		t.Errorf("expected no tool event for a dropped call, got %v", names)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "a.md")); err == nil {
+		t.Error("an incomplete tool call must not write anything")
+	}
+}
+
+func TestHermesBridge_ToolLoop_TwoCallsInOneTurn(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "a.md"), []byte("contenu de a"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{
+			{id: "call_1", name: "read_file", arguments: `{"path":"a.md"}`},
+			{id: "call_2", name: "write_file", arguments: `{"path":"b.md","content":"# B"}`},
+		}},
+		{text: "Les deux sont faits."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runDeskDirectJob(t, b, "Lis a.md puis écris b.md")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	if got := hermes.requestCount(); got != 2 {
+		t.Fatalf("expected 2 requests, got %d", got)
+	}
+	results := toolResultContents(t, hermes.request(t, 1))
+	if len(results) != 2 {
+		t.Fatalf("expected both tool results to be fed back, got %v", results)
+	}
+	if !strings.Contains(results[0], "contenu de a") {
+		t.Errorf("expected the read result first (tool_call order), got %q", results[0])
+	}
+	if !strings.Contains(results[1], "b.md") {
+		t.Errorf("expected the write result second, got %q", results[1])
+	}
+	if ids := toolCallIDs(t, hermes.request(t, 1)); len(ids) != 2 || ids[0] != "call_1" || ids[1] != "call_2" {
+		t.Errorf("expected tool_call_id call_1 then call_2, got %v", ids)
+	}
+	if data, err := os.ReadFile(filepath.Join(tmpDir, "b.md")); err != nil || string(data) != "# B" {
+		t.Errorf("expected b.md to be written, got %q / %v", string(data), err)
+	}
+}
+
+// TestHermesBridge_ToolLoop_MissingCallID: some gateways omit the tool-call id,
+// but the tool result message MUST carry a tool_call_id matching the assistant
+// message or the follow-up request is rejected upstream.
+func TestHermesBridge_ToolLoop_MissingCallID(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "a.md"), []byte("contenu de a"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "", name: "read_file", arguments: `{"path":"a.md"}`}}},
+		{text: "Lu."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runDeskDirectJob(t, b, "Lis a.md")
+
+	assertNoErrorEvent(t, events)
+	doneEvent(t, events)
+
+	req := hermes.request(t, 1)
+	ids := toolCallIDs(t, req)
+	if len(ids) != 1 || ids[0] != "call_0" {
+		t.Fatalf("expected the synthesised id call_0 on the tool result, got %v", ids)
+	}
+	if assistantIDs := assistantToolCallIDs(t, req); len(assistantIDs) != 1 || assistantIDs[0] != ids[0] {
+		t.Errorf("assistant tool_calls ids %v must match the tool result ids %v", assistantIDs, ids)
+	}
+}
+
+// TestHermesBridge_ToolLoop_ChunkErrorAfterWrite: the gateway failing mid-loop
+// must surface as an error, and the file already written stays written — the
+// teacher's editor was reloaded from it.
+func TestHermesBridge_ToolLoop_ChunkErrorAfterWrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "write_file",
+			arguments: `{"path":"a.md","content":"# A"}`}}},
+		{errorMessage: "upstream model overloaded"},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runDeskDirectJob(t, b, "Écris a.md")
+
+	var sawError bool
+	for _, ev := range events {
+		if ev.Type == "error" && strings.Contains(ev.Error, "overloaded") {
+			sawError = true
+		}
+		if ev.Type == "done" {
+			t.Error("no done event must follow a chunk error")
+		}
+	}
+	if !sawError {
+		t.Fatalf("expected the chunk error to reach the teacher, got %v", events)
+	}
+	if !hasFileChanged(events, "a.md") {
+		t.Errorf("expected the file_changed event of the completed write, got %v", toolEventNames(events))
+	}
+	if data, err := os.ReadFile(filepath.Join(tmpDir, "a.md")); err != nil || string(data) != "# A" {
+		t.Errorf("the write that already succeeded must not be rolled back, got %q / %v", string(data), err)
+	}
+}
+
+func TestHermesBridge_ToolLoop_LoopCapMentionsWrites(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// A model stuck writing the same file forever: when the loop is cut, the file
+	// on disk has already been modified and the message must say so.
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "write_file",
+			arguments: `{"path":"a.md","content":"# encore"}`}}},
+	}, true)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	events := runDeskDirectJob(t, b, "Boucle d'écriture")
+
+	assertNoErrorEvent(t, events)
+	done := doneEvent(t, events)
+	if !strings.Contains(done.Reply, "conservées") {
+		t.Errorf("expected the cut message to say the writes already applied are kept, got %q", done.Reply)
 	}
 }

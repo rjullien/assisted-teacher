@@ -71,11 +71,12 @@
     "subModeLabel": "Mode:",
     "subModeInsert": "Copy / insert",
     "subModeDirect": "Direct update",
-    "subModeInsertHint": "Lya answers in the chat, you copy or insert what you keep. No file is modified.",
+    "subModeInsertHint": "Lya answers in the chat, you copy or insert what you keep. No file is modified: switch to “Direct update” to let her edit the file herself.",
     "subModeDirectHint": "Lya edits the working file shown below directly.",
     "workingFile": "✍️ Working file: {path}",
     "noWorkingFile": "⚠️ No file open: open a file so Lya can edit it.",
-    "updated": "File updated by Lya."
+    "updated": "File updated by Lya.",
+    "outsideWorkingFile": "⚠️ outside the working file shown above"
   },
   "programme": {
     "title": "Official Curriculum",
@@ -116,6 +117,9 @@
     "toolWrite": "✏️ Writing {path}",
     "toolOther": "🔧 {name}",
     "toolUnknown": "🔧 working…",
+    "toolFailed": "⚠️ Failed on {path}: {error}",
+    "toolFailedNoPath": "⚠️ Tool {name} failed: {error}",
+    "toolErrorGeneric": "unknown reason",
     "statusStarting": "⏳ Starting Pi…",
     "statusThinking": "⏳ Pi is thinking…",
     "statusRetrying": "🔄 Retrying…",
