@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { getJSON, putText, request, postJSON, handleAuthExpired } from '../api'
+import { useEffect, useState, useRef } from 'react'
+import { getJSON, getText, putText, request, postJSON, handleAuthExpired } from '../api'
 import { useI18n } from '../i18n'
 
 interface FileNode {
@@ -32,6 +32,7 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
   const [tree, setTree] = useState<FileNode[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' } | null>(null)
+  const uploadInputRef = useRef<HTMLInputElement>(null)
 
   const showToast = (message: string, type: 'error' | 'success' = 'error') => {
     setToast({ message, type })
@@ -179,6 +180,55 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
     await loadTree()
   }
 
+  const handleDownload = async (node: FileNode) => {
+    const res = await getText(`/api/file?path=${encodeURIComponent(node.path)}`)
+    if (res.authExpired) {
+      handleAuthExpired()
+      return
+    }
+    if (res.ok && res.data !== null) {
+      const blob = new Blob([res.data], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = node.name
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+  }
+
+  const handleUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    // Determine the target directory: parent of the active file, or root
+    let targetDir = ''
+    if (activePath) {
+      const lastSlash = activePath.lastIndexOf('/')
+      if (lastSlash > -1) {
+        targetDir = activePath.substring(0, lastSlash)
+      }
+    }
+
+    for (const file of Array.from(files)) {
+      const text = await file.text()
+      const fullPath = targetDir ? `${targetDir}/${file.name}` : file.name
+      const res = await putText(
+        `/api/file?path=${encodeURIComponent(fullPath)}`,
+        text
+      )
+      if (res.authExpired) {
+        handleAuthExpired()
+        return
+      }
+      if (!res.ok) {
+        showToast(`${t('fileTree.uploadFailed')} : ${res.error || 'erreur inconnue'}`)
+        return
+      }
+      showToast(t('fileTree.uploaded', { name: file.name }), 'success')
+    }
+    await loadTree()
+    onRefresh()
+  }
+
   return (
     <div className="file-tree">
       <div className="file-tree-header">
@@ -186,6 +236,18 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
         <div className="file-tree-header-actions">
           <button onClick={() => handleNewFolder('')} title={t('fileTree.newFolder')}>📁+</button>
           <button onClick={() => handleNewFile('')} title={t('fileTree.newFile')}>📄+</button>
+          <button onClick={() => uploadInputRef.current?.click()} title={t('fileTree.upload')}>📤</button>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept=".md,.txt,.json"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              handleUpload(e.target.files)
+              e.target.value = ''
+            }}
+          />
         </div>
       </div>
 
@@ -214,6 +276,7 @@ export default function FileTree({ onSelect, onRefresh, refreshKey }: FileTreePr
             onSelect={handleSelect}
             onDelete={handleDelete}
             onRename={handleRename}
+            onDownload={handleDownload}
             onNewFile={handleNewFile}
             onNewFolder={handleNewFolder}
           />
@@ -241,6 +304,7 @@ function TreeNode({
   onSelect,
   onDelete,
   onRename,
+  onDownload,
   onNewFile,
   onNewFolder,
 }: {
@@ -249,6 +313,7 @@ function TreeNode({
   onSelect: (node: FileNode) => void
   onDelete: (node: FileNode) => void
   onRename: (node: FileNode) => void
+  onDownload: (node: FileNode) => void
   onNewFile: (dirPath: string) => void
   onNewFolder: (dirPath: string) => void
 }) {
@@ -292,6 +357,15 @@ function TreeNode({
               </button>
             </>
           )}
+          {!node.isDir && (
+            <button
+              className="file-action-btn"
+              onClick={() => onDownload(node)}
+              title={t('fileTree.download')}
+            >
+              ⬇️
+            </button>
+          )}
           <button
             className="file-action-btn"
             onClick={() => onRename(node)}
@@ -325,6 +399,7 @@ function TreeNode({
               onSelect={onSelect}
               onDelete={onDelete}
               onRename={onRename}
+              onDownload={onDownload}
               onNewFile={onNewFile}
               onNewFolder={onNewFolder}
             />

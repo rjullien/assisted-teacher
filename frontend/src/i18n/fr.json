@@ -39,7 +39,11 @@
     "newFileHere": "Nouveau cours ici",
     "newSubfolder": "Nouveau sous-dossier",
     "rename": "Renommer",
-    "delete": "Supprimer"
+    "delete": "Supprimer",
+    "download": "Télécharger",
+    "upload": "Importer un fichier",
+    "uploadFailed": "Import échoué",
+    "uploaded": "\"{name}\" importé"
   },
   "editor": {
     "empty": "Sélectionnez un fichier à éditer",

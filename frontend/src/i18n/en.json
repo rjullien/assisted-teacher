@@ -39,7 +39,11 @@
     "newFileHere": "New lesson here",
     "newSubfolder": "New subfolder",
     "rename": "Rename",
-    "delete": "Delete"
+    "delete": "Delete",
+    "download": "Download",
+    "upload": "Upload file",
+    "uploadFailed": "Upload failed",
+    "uploaded": "\"{name}\" uploaded"
   },
   "editor": {
     "empty": "Select a file to edit",
