@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "feat",
   "description": "Add workspace file-write capability to HermesBridge in mode Desk, so that when Hermes reports a write_file/edit_file/create_file tool via hermes.tool.progress SSE events, the backend writes the file to the local workspace and emits a file_changed event - matching the behavior of PiBridge.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "1. Modify NewHermesBridge in backend/internal/bridge/hermes.go to accept a workDir parameter (string). Update the struct to store it.",
     "2. Add a safePath helper method on HermesBridge (reuse the same logic from backend/internal/api/files.go: filepath.Clean, reject '..' and absolute paths, ensure result stays under workDir).",
@@ -23,5 +23,5 @@
     "cd /projects/sandbox/assisted-teacher/backend && go test ./... -v"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "All 5 existing + 2 new Hermes tests pass. Full backend test suite passes. The workDir parameter is passed from main.go so mode Desk writes files while mode Lya (empty workDir) silently skips. No frontend changes needed."
 }
