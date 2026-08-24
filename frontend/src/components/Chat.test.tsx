@@ -16,7 +16,7 @@ describe('Chat', () => {
   })
 
   // Helper: render Chat and wait for WebSocket to connect
-  async function renderConnected(props?: { currentFile?: string | null; fileContent?: string; agent?: 'lya' | 'pi'; userName?: string; session?: ChatSession; onSessionChange?: (s: ChatSession) => void }) {
+  async function renderConnected(props?: { currentFile?: string | null; fileContent?: string; agent?: 'lya' | 'pi'; userName?: string; session?: ChatSession; onSessionChange?: (s: ChatSession) => void; onFileChanged?: (path: string) => void }) {
     const result = renderWithI18n(
       <Chat {...defaultProps} {...props} currentFile={props?.currentFile ?? null} />
     )
@@ -327,6 +327,58 @@ describe('Chat', () => {
     const payload = await sendPrompt(ws.instances, 'Que faire ?')
 
     expect(payload.content).toBe('[Contexte: je travaille sur le fichier "B1/empty.md"]\n\nQue faire ?')
+
+    ws.restore()
+  })
+
+  // --- Hermes file tools (read_file / write_file / patch_file) --------------
+  //
+  // The tool loop in mode Desk names its tools read_file, write_file and
+  // patch_file. Before they were declared in tools.ts they were treated as
+  // generic tools: only a transient "🔧 write_file" status line, no audit trail
+  // in the thread and no "file updated" state on the answer.
+
+  it('keeps a write_file event in the thread and marks the answer as having written files', async () => {
+    const ws = trackWebSockets()
+    const onFileChanged = vi.fn()
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya', onFileChanged })
+
+    const lastWs = ws.instances[ws.instances.length - 1]
+    await act(async () => {
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 1, type: 'meta', jobId: 'job1' }) }))
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 2, type: 'tool', tool: { name: 'write_file', path: 'B1/unit5.md', status: 'done' } }) }))
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 3, type: 'tool', tool: { name: 'file_changed', path: 'B1/unit5.md' } }) }))
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 4, type: 'done', reply: 'Fichier complété.' }) }))
+    })
+
+    // Persisted as a tool message, not just flashed in the transient status line.
+    const toolMessages = document.querySelectorAll('.chat-message.tool')
+    expect(toolMessages.length).toBe(1)
+    expect(toolMessages[0].textContent).toBe('✏️ Écriture de B1/unit5.md')
+
+    // file_changed is plumbing: it refreshes the editor and is never displayed.
+    expect(onFileChanged).toHaveBeenCalledWith('B1/unit5.md')
+    expect(document.querySelector('.chat-messages')?.textContent).not.toContain('file_changed')
+
+    // jobWroteFiles: the answer offers the "file updated" note instead of Insert.
+    expect(screen.getByText('Fichier mis à jour par Pi.')).toBeInTheDocument()
+    expect(screen.queryByText(/Insérer/)).not.toBeInTheDocument()
+
+    ws.restore()
+  })
+
+  it('keeps a read_file event in the thread', async () => {
+    const ws = trackWebSockets()
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya' })
+
+    const lastWs = ws.instances[ws.instances.length - 1]
+    await act(async () => {
+      lastWs.onmessage?.(new MessageEvent('message', { data: JSON.stringify({ seq: 1, type: 'tool', tool: { name: 'read_file', path: 'B1/unit5.md', status: 'done' } }) }))
+    })
+
+    const toolMessages = document.querySelectorAll('.chat-message.tool')
+    expect(toolMessages.length).toBe(1)
+    expect(toolMessages[0].textContent).toBe('📄 Lecture de B1/unit5.md')
 
     ws.restore()
   })

@@ -44,6 +44,28 @@ describe('toolLabel', () => {
     expect(toolLabel(normalizeTool({ name: 'edit', path: 'a.md' }), t)).toBe('✏️ Écriture de a.md')
   })
 
+  // The Hermes tool loop in mode Desk names its tools read_file / write_file /
+  // patch_file. Without them in the name sets they reached the generic
+  // t('piChat.toolOther') branch and only flashed in the transient status line.
+  it('labels the Hermes file tools like the pi ones', () => {
+    expect(toolLabel(normalizeTool({ name: 'read_file', path: 'a.md' }), t)).toBe(
+      '📄 Lecture de a.md',
+    )
+    expect(toolLabel(normalizeTool({ name: 'write_file', path: 'a.md' }), t)).toBe(
+      '✏️ Écriture de a.md',
+    )
+    expect(toolLabel(normalizeTool({ name: 'patch_file', path: 'a.md' }), t)).toBe(
+      '✏️ Écriture de a.md',
+    )
+  })
+
+  it('labels the Hermes file tools in en too', () => {
+    const tEn = (key: string, params?: Record<string, string | number>) => tFn('en', key, params)
+    expect(toolLabel(normalizeTool({ name: 'read_file', path: 'a.md' }), tEn)).toBe('📄 Reading a.md')
+    expect(toolLabel(normalizeTool({ name: 'write_file', path: 'a.md' }), tEn)).toBe('✏️ Writing a.md')
+    expect(toolLabel(normalizeTool({ name: 'patch_file', path: 'a.md' }), tEn)).toBe('✏️ Writing a.md')
+  })
+
   it('labels a named tool with its name', () => {
     expect(toolLabel(normalizeTool({ name: 'web_search' }), t)).toBe('🔧 web_search')
   })
@@ -68,5 +90,14 @@ describe('isFileOp', () => {
     expect(isFileOp(normalizeTool({ name: 'read' }))).toBe(false)
     expect(isFileOp(normalizeTool({ name: 'web_search' }))).toBe(false)
     expect(isFileOp(normalizeTool({}))).toBe(false)
+  })
+
+  it('is true for the Hermes file tools when they carry a path', () => {
+    expect(isFileOp(normalizeTool({ name: 'read_file', path: 'a.md' }))).toBe(true)
+    expect(isFileOp(normalizeTool({ name: 'write_file', path: 'a.md' }))).toBe(true)
+    expect(isFileOp(normalizeTool({ name: 'patch_file', path: 'a.md' }))).toBe(true)
+    expect(isFileOp(normalizeTool({ name: 'read_file', path: '' }))).toBe(false)
+    expect(isFileOp(normalizeTool({ name: 'write_file' }))).toBe(false)
+    expect(isFileOp(normalizeTool({ name: 'patch_file', path: '  ' }))).toBe(false)
   })
 })

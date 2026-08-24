@@ -2,7 +2,7 @@
   "id": "FEAT-003",
   "type": "feat",
   "description": "Make the frontend render the new backend tool events properly. frontend/src/tools.ts currently recognises only the pi tool names read/write/edit, so the read_file, write_file and patch_file events emitted by the new Hermes loop would fall through to the generic transient '🔧 {name}' status line instead of the labelled audit trail in the thread. This feature is independent of FEAT-002 and touches only the frontend.",
-  "status": "pending",
+  "status": "completed",
   "steps": [
     "Read frontend/src/tools.ts, frontend/src/tools.test.ts and the 'tool' case of handleEvent in frontend/src/components/Chat.tsx (around lines 339-365) before editing.",
     "In frontend/src/tools.ts, introduce two small name sets (read-like: 'read', 'read_file'; write-like: 'write', 'edit', 'write_file', 'patch_file') and use them in both isFileOp and toolLabel so the new names get the existing piChat.toolRead / piChat.toolWrite labels. Keep the existing behaviour for unnamed and unknown payloads untouched (the '🔧 outil…' regression guard must stay green).",
@@ -24,5 +24,5 @@
     "cd frontend && npm run build"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "Implemented in tools.ts as two exported sets, READ_TOOL_NAMES = {read, read_file} and WRITE_TOOL_NAMES = {write, edit, write_file, patch_file}, used by isFileOp and toolLabel; Chat.tsx imports WRITE_TOOL_NAMES for the jobWroteFiles.current condition instead of duplicating the literals. toolLabel now tests tool.path first, then set membership, so the no-name payload still lands on piChat.toolUnknown ('🔧 outil…' guard stays green). Chat.test.tsx: renderConnected's props type gained an optional onFileChanged so the new test can assert the synthetic file_changed event; FEAT-004 should keep that. Verification: frontend npx vitest --run = 8 files / 84 tests passing (79 pre-existing + 5 new), npm run build ok; backend go build/vet/test ok and gofmt printed nothing (untouched). Mutation test (sets reverted to the old literals ['read'] and ['write','edit'], backup kept inside the repo as src/tools.ts.mutbak and restored in the same shell command because /tmp does not persist): exactly the 5 new assertions failed, the 79 pre-existing stayed green. Failing tests were tools.test.ts 'labels the Hermes file tools like the pi ones', 'labels the Hermes file tools in en too', 'is true for the Hermes file tools when they carry a path', and Chat.test.tsx 'keeps a write_file event in the thread and marks the answer as having written files' + 'keeps a read_file event in the thread'. The write_file Chat test also covers jobWroteFiles by asserting the answer renders 'Fichier mis à jour par Pi.' and no Insert button. buildDeskPrompt, MAX_INLINED_FILE_CHARS, bridge/pi.go and LyaChat.tsx untouched. Note for FEAT-004: the 'file updated' note reuses the pi wording piChat.updated, which mentions Pi even when Lya wrote the file - worth a dedicated string when the direct-update sub-mode lands."
 }

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { AuthWebSocket, handleAuthExpired } from '../api'
 import { useI18n } from '../i18n'
-import { normalizeTool, isFileOp, toolLabel } from '../tools'
+import { normalizeTool, isFileOp, toolLabel, WRITE_TOOL_NAMES } from '../tools'
 
 interface ChatMessage {
   id: string
@@ -346,7 +346,10 @@ export default function Chat({
           break
         }
 
-        if ((tool.name === 'write' || tool.name === 'edit') && tool.status === 'done') {
+        // Covers pi (write/edit) and the Hermes tool loop (write_file/patch_file):
+        // the name set lives in tools.ts so a new backend tool only has to be
+        // declared once.
+        if (WRITE_TOOL_NAMES.has(tool.name) && tool.status === 'done') {
           jobWroteFiles.current = true
         }
 

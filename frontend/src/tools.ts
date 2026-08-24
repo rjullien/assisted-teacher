@@ -54,10 +54,34 @@ export function normalizeTool(raw: unknown): NormalizedTool {
   return { name, path, status }
 }
 
+/**
+ * Tool names that read a file.
+ *
+ * `read` comes from the pi bridge; `read_file` from the Hermes tool loop in
+ * mode Desk. Both must map to the same label, otherwise a `read_file` event
+ * falls through to the generic transient "🔧 read_file" status line instead of
+ * staying in the thread as an audit trail.
+ */
+export const READ_TOOL_NAMES: ReadonlySet<string> = new Set(['read', 'read_file'])
+
+/**
+ * Tool names that modify a file.
+ *
+ * `write` / `edit` come from the pi bridge, `write_file` / `patch_file` from the
+ * Hermes tool loop. Chat.tsx also reuses this set to decide whether a job
+ * touched the workspace, so the literals live here only.
+ */
+export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'write',
+  'edit',
+  'write_file',
+  'patch_file',
+])
+
 /** True when the payload describes a file operation worth keeping in the thread. */
 export function isFileOp(tool: NormalizedTool): boolean {
   if (!tool.path) return false
-  return tool.name === 'read' || tool.name === 'write' || tool.name === 'edit'
+  return READ_TOOL_NAMES.has(tool.name) || WRITE_TOOL_NAMES.has(tool.name)
 }
 
 type Translate = (key: string, params?: Record<string, string | number>) => string
@@ -67,8 +91,8 @@ type Translate = (key: string, params?: Record<string, string | number>) => stri
  * carries no usable name, so the UI can never surface a raw `{name}`.
  */
 export function toolLabel(tool: NormalizedTool, t: Translate): string {
-  if (tool.name === 'read' && tool.path) return t('piChat.toolRead', { path: tool.path })
-  if ((tool.name === 'write' || tool.name === 'edit') && tool.path) {
+  if (tool.path && READ_TOOL_NAMES.has(tool.name)) return t('piChat.toolRead', { path: tool.path })
+  if (tool.path && WRITE_TOOL_NAMES.has(tool.name)) {
     return t('piChat.toolWrite', { path: tool.path })
   }
   if (tool.name) return t('piChat.toolOther', { name: tool.name })
