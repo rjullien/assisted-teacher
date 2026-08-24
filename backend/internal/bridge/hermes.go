@@ -359,9 +359,13 @@ func (b *HermesBridge) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			Type    string `json:"type"`
 			Content string `json:"content,omitempty"`
 			System  string `json:"system,omitempty"`
-			Mode    string `json:"mode,omitempty"`
-			JobID   string `json:"jobId,omitempty"`
-			After   int    `json:"after,omitempty"`
+			// Path of the file the teacher has open, for the agent_usage log.
+			// Lya cannot read the workspace, so the frontend inlines the file
+			// content into Content itself — this is observability, not context.
+			CurrentFile string `json:"currentFile,omitempty"`
+			Mode        string `json:"mode,omitempty"`
+			JobID       string `json:"jobId,omitempty"`
+			After       int    `json:"after,omitempty"`
 		}
 		if err := json.Unmarshal(message, &msg); err != nil {
 			sendWSJSON(conn, StreamEvent{Type: "error", Error: "invalid JSON"})
@@ -371,7 +375,7 @@ func (b *HermesBridge) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		switch msg.Type {
 		case "prompt":
 			// Start a new job and immediately subscribe
-			job := b.startJob(msg.Content, msg.System, msg.Mode)
+			job := b.startJob(msg.Content, msg.System, msg.CurrentFile, msg.Mode)
 			sendWSJSON(conn, StreamEvent{Type: "meta", JobID: job.ID})
 			b.streamToWS(conn, job, 0)
 		case "subscribe":
@@ -389,7 +393,7 @@ func (b *HermesBridge) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 // startJob creates a background job that calls Hermes streaming.
-func (b *HermesBridge) startJob(content, systemPrompt, mode string) *Job {
+func (b *HermesBridge) startJob(content, systemPrompt, currentFile, mode string) *Job {
 	b.hub.gc()
 	ctx, cancel := context.WithTimeout(context.Background(), jobRunTimeout)
 	job := &Job{
@@ -433,8 +437,12 @@ func (b *HermesBridge) startJob(content, systemPrompt, mode string) *Job {
 			status = "error"
 		}
 		// agent_usage log line
-		log.Printf("agent_usage agent=lya mode=%s jobId=%s promptLen=%d durationMs=%d status=%s",
-			mode, job.ID, len(content), durationMs, status)
+		file := currentFile
+		if file == "" {
+			file = "-"
+		}
+		log.Printf("agent_usage agent=lya mode=%s jobId=%s promptLen=%d file=%s durationMs=%d status=%s",
+			mode, job.ID, len(content), file, durationMs, status)
 	}()
 	return job
 }

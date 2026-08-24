@@ -93,6 +93,11 @@ export const emptyChatSession: ChatSession = {
 
 interface ChatProps {
   currentFile: string | null
+  /**
+   * Current text of `currentFile`, as loaded in the editor. Inlined into the
+   * prompt in mode Desk — see buildDeskPrompt.
+   */
+  fileContent?: string
   onInsert: (text: string) => void
   programme: ProgrammeData | null
   agent?: 'lya' | 'pi'
@@ -102,6 +107,63 @@ interface ChatProps {
   onSessionChange?: (session: ChatSession) => void
   /** Display name from Authelia, so the assistant knows who it is helping. */
   userName?: string
+}
+
+// --- File context inlining (mode Desk) ---
+
+/**
+ * Maximum number of characters of file content inlined into a Desk prompt.
+ *
+ * Inlining makes the prompt as large as the file, so a long course document
+ * would push the system prompt and the actual question out of the context
+ * window. Anything past this cap is cut and flagged, never sent silently.
+ */
+export const MAX_INLINED_FILE_CHARS = 20000
+
+/**
+ * Appended when the file is longer than the cap. Explicit, so Lya treats the
+ * extract as incomplete instead of assuming the document ends there.
+ */
+const TRUNCATION_NOTICE =
+  '\n\n[…]\n\n(Contenu tronqué : le fichier est plus long que cet extrait. Demande-moi la suite si tu en as besoin.)'
+
+/**
+ * Picks a fence long enough that the file cannot close it early. Course files
+ * are Markdown and routinely contain ``` blocks of their own.
+ */
+function fenceFor(content: string): string {
+  const longestRun = (content.match(/`{3,}/g) || []).reduce((n, run) => Math.max(n, run.length), 2)
+  return '`'.repeat(longestRun + 1)
+}
+
+/**
+ * Builds the prompt for mode Desk, with the file content inlined.
+ *
+ * Mode Desk talks to Lya (Hermes), who runs in a different pod (namespace
+ * `openclaw`, PVC mounted on /opt/data) and has no access to this app's
+ * workspace. Sending her only the path made her answer "je ne vois pas de
+ * fichier récent correspondant dans le dossier de travail" — she has no tool
+ * able to open it. The content therefore has to travel inside the prompt.
+ *
+ * The question comes last so it stays the most recent, most salient part of
+ * the message after a potentially long document.
+ */
+function buildDeskPrompt(currentFile: string, fileContent: string, question: string): string {
+  const body =
+    fileContent.length > MAX_INLINED_FILE_CHARS
+      ? fileContent.slice(0, MAX_INLINED_FILE_CHARS) + TRUNCATION_NOTICE
+      : fileContent
+  const fence = fenceFor(body)
+  return [
+    `[Contexte: je travaille sur le fichier "${currentFile}". Son contenu est reproduit ci-dessous : tu n'as pas accès à mon dossier de travail, ne cherche pas à l'ouvrir.]`,
+    '',
+    `${fence}${currentFile}`,
+    body,
+    fence,
+    '',
+    'Ma demande :',
+    question,
+  ].join('\n')
 }
 
 // --- System prompt builder ---
@@ -165,6 +227,7 @@ CONSIGNES :
 
 export default function Chat({
   currentFile,
+  fileContent = '',
   onInsert,
   programme,
   agent = 'lya',
@@ -515,7 +578,13 @@ export default function Chat({
 
     let content = input.trim()
     if (currentFile) {
-      content = `[Contexte: je travaille sur le fichier "${currentFile}"]\n\n${content}`
+      // Mode Pi stays path-only on purpose: pi runs in this pod, mounts the same
+      // workspace and owns a `read` tool, so inlining would duplicate context it
+      // can fetch itself. Only Lya, who cannot reach the workspace, needs the text.
+      content =
+        agent !== 'pi' && fileContent
+          ? buildDeskPrompt(currentFile, fileContent, content)
+          : `[Contexte: je travaille sur le fichier "${currentFile}"]\n\n${content}`
     }
 
     // Append the message and clear the draft in one patch, so a burst of

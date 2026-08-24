@@ -107,6 +107,7 @@ export default function MobileLayout({
         {activeTab === 'chat' && (
           <Chat
             currentFile={currentFile}
+            fileContent={fileContent}
             onInsert={(text) => {
               onInsertFromChat(text)
               setActiveTab('editor')

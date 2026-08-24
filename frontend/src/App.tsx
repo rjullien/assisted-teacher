@@ -326,6 +326,7 @@ export default function App() {
               <Allotment.Pane preferredSize={360} minSize={280}>
                 <Chat
                   currentFile={currentFile}
+                  fileContent={fileContent}
                   onInsert={handleInsertFromChat}
                   programme={programme}
                   agent={chatAgent}

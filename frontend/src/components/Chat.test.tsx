@@ -1,7 +1,7 @@
 import { screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderWithI18n } from '../test/i18n-wrapper'
-import Chat, { ChatSession, emptyChatSession } from './Chat'
+import Chat, { ChatSession, emptyChatSession, MAX_INLINED_FILE_CHARS } from './Chat'
 
 describe('Chat', () => {
   const mockOnInsert = vi.fn()
@@ -16,7 +16,7 @@ describe('Chat', () => {
   })
 
   // Helper: render Chat and wait for WebSocket to connect
-  async function renderConnected(props?: { currentFile?: string | null; userName?: string; session?: ChatSession; onSessionChange?: (s: ChatSession) => void }) {
+  async function renderConnected(props?: { currentFile?: string | null; fileContent?: string; agent?: 'lya' | 'pi'; userName?: string; session?: ChatSession; onSessionChange?: (s: ChatSession) => void }) {
     const result = renderWithI18n(
       <Chat {...defaultProps} {...props} currentFile={props?.currentFile ?? null} />
     )
@@ -25,6 +25,43 @@ describe('Chat', () => {
       await new Promise((r) => setTimeout(r, 10))
     })
     return result
+  }
+
+  type TrackedWS = { sentMessages: string[]; onmessage: ((ev: MessageEvent) => void) | null }
+
+  /**
+   * Wraps the global MockWebSocket so every instance built during the test is
+   * captured, which is the only way to read the raw payloads Chat sent.
+   * Same pattern as 'identity is in every system prompt' below.
+   */
+  function trackWebSockets(): { instances: TrackedWS[]; restore: () => void } {
+    const instances: TrackedWS[] = []
+    const OrigMock = globalThis.WebSocket as unknown as new (url: string) => TrackedWS & { onopen: ((ev: Event) => void) | null; readyState: number }
+    const WrappedWS = function (this: unknown, url: string) {
+      const instance = new OrigMock(url)
+      instances.push(instance)
+      return instance
+    } as unknown as typeof WebSocket
+    Object.assign(WrappedWS, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 })
+    Object.defineProperty(WrappedWS, 'prototype', { value: OrigMock.prototype, writable: false })
+    vi.stubGlobal('WebSocket', WrappedWS)
+    return { instances, restore: () => vi.stubGlobal('WebSocket', OrigMock) }
+  }
+
+  /** Types a question, sends it, and returns the last `prompt` payload put on the wire. */
+  async function sendPrompt(instances: TrackedWS[], question: string) {
+    const textarea = screen.getByPlaceholderText("Demandez à l'IA...")
+    fireEvent.change(textarea, { target: { value: question } })
+    fireEvent.click(screen.getByText('Envoyer'))
+    await waitFor(() => {
+      expect(screen.getByText(question)).toBeInTheDocument()
+    })
+    const payloads = instances
+      .flatMap((i) => i.sentMessages)
+      .map((s) => JSON.parse(s))
+      .filter((p: { type: string }) => p.type === 'prompt')
+    expect(payloads.length).toBeGreaterThan(0)
+    return payloads[payloads.length - 1] as { content: string; mode: string; currentFile?: string }
   }
 
   it('renders the chat header', () => {
@@ -221,5 +258,76 @@ describe('Chat', () => {
 
     // Restore original mock
     vi.stubGlobal('WebSocket', OrigMock)
+  })
+
+  // --- File context (mode Desk vs mode Pi) ---------------------------------
+  //
+  // Lya (Hermes) runs in another pod and cannot open the app's workspace, so in
+  // mode Desk the file text has to be carried inside the prompt. pi runs in this
+  // pod with a `read` tool, so it must keep receiving the path only.
+
+  const SAMPLE_FILE = '# Unit 5 — Travel\n\nThe quick brown fox jumps over the lazy dog.'
+
+  it('mode Desk inlines the file content into the prompt', async () => {
+    const ws = trackWebSockets()
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'lya' })
+
+    const payload = await sendPrompt(ws.instances, 'Complète ce cours')
+
+    expect(payload.mode).toBe('desk')
+    // The whole point of the fix: the text, not just the name.
+    expect(payload.content).toContain('The quick brown fox jumps over the lazy dog.')
+    expect(payload.content).toContain('# Unit 5 — Travel')
+    expect(payload.content).toContain('B1/unit5.md')
+    // The question must stay identifiable and come last, after the document.
+    expect(payload.content.trimEnd().endsWith('Complète ce cours')).toBe(true)
+    // The path still travels as its own field for the backend log line.
+    expect(payload.currentFile).toBe('B1/unit5.md')
+
+    ws.restore()
+  })
+
+  it('mode Pi sends the path only, never the content', async () => {
+    const ws = trackWebSockets()
+    await renderConnected({ currentFile: 'B1/unit5.md', fileContent: SAMPLE_FILE, agent: 'pi' })
+
+    const payload = await sendPrompt(ws.instances, 'Complète ce cours')
+
+    expect(payload.mode).toBe('pi')
+    expect(payload.content).not.toContain('The quick brown fox jumps over the lazy dog.')
+    expect(payload.content).toContain('[Contexte: je travaille sur le fichier "B1/unit5.md"]')
+
+    ws.restore()
+  })
+
+  it('mode Desk truncates an oversized file and flags the truncation', async () => {
+    const ws = trackWebSockets()
+    const tail = 'CECI_EST_LA_FIN_DU_FICHIER'
+    const oversized = 'a'.repeat(MAX_INLINED_FILE_CHARS + 500) + tail
+    await renderConnected({ currentFile: 'B1/long.md', fileContent: oversized, agent: 'lya' })
+
+    const payload = await sendPrompt(ws.instances, 'Résume ce cours')
+
+    // Everything past the cap is dropped...
+    expect(payload.content).not.toContain(tail)
+    expect(payload.content).toContain('a'.repeat(100))
+    // ...and Lya is told so, rather than believing the file ends there.
+    expect(payload.content).toContain('Contenu tronqué')
+    expect(payload.content.length).toBeLessThan(oversized.length)
+    // The question survives the truncation.
+    expect(payload.content.trimEnd().endsWith('Résume ce cours')).toBe(true)
+
+    ws.restore()
+  })
+
+  it('mode Desk falls back to the path when the file has no content yet', async () => {
+    const ws = trackWebSockets()
+    await renderConnected({ currentFile: 'B1/empty.md', fileContent: '', agent: 'lya' })
+
+    const payload = await sendPrompt(ws.instances, 'Que faire ?')
+
+    expect(payload.content).toBe('[Contexte: je travaille sur le fichier "B1/empty.md"]\n\nQue faire ?')
+
+    ws.restore()
   })
 })
