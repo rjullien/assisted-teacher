@@ -279,6 +279,7 @@ export default function App() {
               onFileChanged={handleFileChanged}
               chatSession={chatSession}
               onChatSessionChange={setChatSession}
+              userName={userName}
             />
           ) : (
             <LyaChat userName={userName} messages={lyaMessages} onMessagesChange={setLyaMessages} />
@@ -331,6 +332,7 @@ export default function App() {
                   onFileChanged={handleFileChanged}
                   session={chatSession}
                   onSessionChange={setChatSession}
+                  userName={userName}
                 />
               </Allotment.Pane>
             </Allotment>
