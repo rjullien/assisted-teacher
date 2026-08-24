@@ -41,10 +41,17 @@ ENV PORT=9847
 ENV WORKSPACE_DIR=/workspace
 ENV PROGRAMMES_DIR=/data/programmes
 
-# Pi configuration
+# Pi configuration. Config is written to $HOME/.pi/agent at boot by entrypoint.sh
+# — that is the only place pi looks for models.json and settings.json.
+ENV HOME=/root
 ENV PI_ENABLED=true
 ENV PI_CMD=pi
-ENV PI_MODELS_JSON=/data/pi-config/models.json
+ENV PI_PROVIDER=bifrost
+ENV PI_MODEL=bifrost-default
+ENV PI_MODEL_ID=opencode-go/deepseek-v4-flash
+# Disable every startup network call (update check, package check, telemetry).
+ENV PI_OFFLINE=1
+ENV PI_SKIP_VERSION_CHECK=1
 
 EXPOSE 9847
 

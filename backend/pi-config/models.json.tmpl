@@ -1,15 +1,18 @@
 {
-  "models": [
-    {
-      "id": "default",
-      "name": "Bifrost (Claude)",
-      "provider": "custom",
-      "apiUrl": "__LLM_API_URL__",
-      "apiKey": "unused",
-      "model": "claude-sonnet-4-20250514",
-      "maxTokens": 8192,
-      "supportsStreaming": true
+  "providers": {
+    "bifrost": {
+      "baseUrl": "__LLM_API_URL__",
+      "api": "openai-completions",
+      "apiKey": "__LLM_API_KEY__",
+      "authHeader": __LLM_AUTH_HEADER__,
+      "models": [
+        {
+          "id": "__LLM_MODEL_ID__",
+          "name": "bifrost-default",
+          "contextWindow": 128000,
+          "maxTokens": 16384
+        }
+      ]
     }
-  ],
-  "default": "default"
+  }
 }

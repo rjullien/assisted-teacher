@@ -90,10 +90,12 @@ func main() {
 	piEnabled := envOr("PI_ENABLED", "true") == "true"
 	if piEnabled {
 		piCmd := envOr("PI_CMD", "pi")
-		piModels := envOr("PI_MODELS_JSON", "")
-		piBridge := bridge.NewPiBridge(piCmd, *workDir, piModels)
+		// Must match the provider key and the model `name` written into
+		// ~/.pi/agent/models.json by entrypoint.sh.
+		piProvider := envOr("PI_PROVIDER", "bifrost")
+		piModel := envOr("PI_MODEL", "bifrost-default")
+		piBridge := bridge.NewPiBridge(piCmd, *workDir, piProvider, piModel)
 		mux.HandleFunc("/ws/agent/pi", piBridge.HandleWebSocket)
-		log.Printf("Pi bridge: cmd=%s, workDir=%s", piCmd, *workDir)
 	}
 
 	// Agent discovery (frontend hides pi button when not available)

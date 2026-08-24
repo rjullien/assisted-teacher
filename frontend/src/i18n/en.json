@@ -103,6 +103,10 @@
     "toolRead": "📄 Reading {path}",
     "toolWrite": "✏️ Writing {path}",
     "toolOther": "🔧 {name}",
-    "toolUnknown": "🔧 working…"
+    "toolUnknown": "🔧 working…",
+    "statusStarting": "⏳ Starting Pi…",
+    "statusThinking": "⏳ Pi is thinking…",
+    "statusRetrying": "🔄 Retrying…",
+    "statusCompacting": "📚 Summarising context…"
   }
 }
