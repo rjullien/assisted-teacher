@@ -22,26 +22,82 @@ import (
 // infrastructure as Hermes.
 //
 // Pi RPC protocol docs: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md
+// piAllowedTools is the strict allowlist passed to `pi --tools`.
+// `bash` and `powershell` are deliberately excluded.
+var piAllowedTools = []string{"read", "edit", "write", "grep", "find", "ls"}
+
 type PiBridge struct {
-	piCmd      string // path to pi binary
-	workDir    string // workspace directory (jail root)
-	modelsJSON string // path to rendered models.json
-	hub        *Hub
-	upgrader   websocket.Upgrader
+	piCmd    string // path to pi binary
+	workDir  string // workspace directory (jail root)
+	provider string // provider key declared in ~/.pi/agent/models.json
+	model    string // model *name* to match (not its id — see runPi)
+	hub      *Hub
+	upgrader websocket.Upgrader
+
+	// Test seams: let pi_test.go re-exec the test binary as a fake pi, so the
+	// bridge can be tested without pi, without Node and without an LLM.
+	testArgs []string
+	testEnv  []string
 }
 
 // NewPiBridge creates a bridge for the pi agent.
-func NewPiBridge(piCmd, workDir, modelsJSON string) *PiBridge {
-	log.Printf("pi bridge: configured (cmd=%s, workDir=%s, models=%s)", piCmd, workDir, modelsJSON)
+func NewPiBridge(piCmd, workDir, provider, model string) *PiBridge {
+	log.Printf("pi bridge: configured (cmd=%s, workDir=%s, provider=%s, model=%s, tools=%s)",
+		piCmd, workDir, provider, model, strings.Join(piAllowedTools, ","))
 	return &PiBridge{
-		piCmd:      piCmd,
-		workDir:    workDir,
-		modelsJSON: modelsJSON,
-		hub:        NewHub(),
+		piCmd:    piCmd,
+		workDir:  workDir,
+		provider: provider,
+		model:    model,
+		hub:      NewHub(),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
 	}
+}
+
+// toolPath extracts the file path a tool event operates on. pi puts it in
+// `args`, under `path` for read/write/edit; `file_path` is accepted as a
+// defensive fallback.
+func toolPath(raw map[string]interface{}) string {
+	args, _ := raw["args"].(map[string]interface{})
+	if args == nil {
+		return ""
+	}
+	if p, ok := args["path"].(string); ok && p != "" {
+		return p
+	}
+	if p, ok := args["file_path"].(string); ok && p != "" {
+		return p
+	}
+	return ""
+}
+
+// tailBuffer keeps the last n lines written to it. Used to attach pi's stderr to
+// an error without letting a chatty process grow memory without bound.
+type tailBuffer struct {
+	mu    sync.Mutex
+	n     int
+	lines []string
+}
+
+func newTailBuffer(n int) *tailBuffer {
+	return &tailBuffer{n: n}
+}
+
+func (b *tailBuffer) add(line string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.lines = append(b.lines, line)
+	if len(b.lines) > b.n {
+		b.lines = b.lines[len(b.lines)-b.n:]
+	}
+}
+
+func (b *tailBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return strings.Join(b.lines, " | ")
 }
 
 // HandleWebSocket upgrades to WS and handles prompt/subscribe messages for pi.
@@ -146,33 +202,70 @@ func (b *PiBridge) startJob(content, systemPrompt, currentFile, mode string) *Jo
 	return job
 }
 
-// runPi spawns `pi --mode rpc --no-session` and streams the response.
-func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, currentFile string, toolCount *int, toolsUsed *[]string) error {
-	// Build the message: system prompt as preamble + user content
-	var msgBuilder strings.Builder
+// buildPiPrompt assembles the single message sent to pi: pedagogical system
+// preamble, then the open-file context, then the teacher's text last.
+//
+// pi is given no conversation history — each request is one turn — so anything
+// that must be known has to be in here.
+func buildPiPrompt(systemPrompt, currentFile, content string) string {
+	var b strings.Builder
 	if systemPrompt != "" {
-		msgBuilder.WriteString(systemPrompt)
-		msgBuilder.WriteString("\n\n---\n\n")
+		b.WriteString(systemPrompt)
+		b.WriteString("\n\n---\n\n")
 	}
 	if currentFile != "" {
-		msgBuilder.WriteString(fmt.Sprintf("[Fichier ouvert : %s]\n\n", currentFile))
+		fmt.Fprintf(&b, "[Fichier ouvert : %s]\n\n", currentFile)
 	}
-	msgBuilder.WriteString(content)
+	b.WriteString(content)
+	return b.String()
+}
 
+// piArgs returns the argv for one pi run. Verified against pi 0.84.2: every
+// flag here appears in pi's own documentation. An undocumented flag is not
+// merely ignored — `--provider custom` is what made pi exit 1 with
+// `Unknown provider "custom"` in v1.7.4 through v1.7.7.
+func (b *PiBridge) piArgs() []string {
 	args := []string{
 		"--mode", "rpc",
 		"--no-session",
+		// Strict allowlist for ALL tools — bash and powershell are deliberately
+		// absent. An agent that writes English lessons has no use for a shell,
+		// and a shell is the one tool no path boundary can contain.
+		"--tools", strings.Join(piAllowedTools, ","),
+		// Ignore any .pi/ the teacher could have dropped in the workspace via
+		// PUT /api/file. Belt and braces with defaultProjectTrust: never.
+		"--no-approve",
 	}
-	if b.modelsJSON != "" {
-		args = append(args, "--provider", "custom", "--model", "default")
+	if b.provider != "" {
+		args = append(args, "--provider", b.provider)
 	}
+	if b.model != "" {
+		// Matched against the model `name` in models.json, not its `id`: the id
+		// carries a slash (opencode-go/…) which --model would read as a
+		// provider/id pair.
+		args = append(args, "--model", b.model)
+	}
+	if len(b.testArgs) > 0 {
+		// The fake pi is this test binary: its own flags must come first, and
+		// `--` stops Go's flag parser so pi's flags reach os.Args untouched
+		// instead of being rejected as unknown.
+		return append(append(append([]string{}, b.testArgs...), "--"), args...)
+	}
+	return args
+}
 
-	cmd := exec.CommandContext(ctx, b.piCmd, args...)
+// runPi spawns `pi --mode rpc --no-session` and streams the response.
+func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, currentFile string, toolCount *int, toolsUsed *[]string) error {
+	prompt := buildPiPrompt(systemPrompt, currentFile, content)
+
+	cmd := exec.CommandContext(ctx, b.piCmd, b.piArgs()...)
 	cmd.Dir = b.workDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	// Set PI_MODELS_JSON so pi finds the custom provider config
-	cmd.Env = append(cmd.Environ(), "PI_MODELS_JSON="+b.modelsJSON)
+	// PI_OFFLINE disables every startup network call (update check, package
+	// check, install telemetry). Inside the cluster those either hang or fail,
+	// and none of them are wanted here.
+	cmd.Env = append(cmd.Environ(), "PI_OFFLINE=1", "PI_SKIP_VERSION_CHECK=1")
+	cmd.Env = append(cmd.Env, b.testEnv...)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -182,20 +275,56 @@ func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, c
 	if err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
+	// Without this, pi's own error message was thrown away and all we ever saw
+	// was "exit status 1".
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("stderr pipe: %w", err)
+	}
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start pi: %w", err)
 	}
 
+	// Tell the UI something is happening before pi has emitted anything.
+	job.append(StreamEvent{Type: "status", Text: "starting"})
+
+	stderrLog := newTailBuffer(20)
+	stderrDone := make(chan struct{})
+	go func() {
+		defer close(stderrDone)
+		sc := bufio.NewScanner(stderrPipe)
+		sc.Buffer(make([]byte, 0, 32*1024), 512*1024)
+		for sc.Scan() {
+			line := sc.Text()
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			log.Printf("pi stderr: %s", truncateStr(line, 500))
+			stderrLog.add(line)
+		}
+	}()
+
+	// fail wraps an error with whatever pi wrote on stderr, so the cause reaches
+	// both the pod log and the UI instead of a bare exit code.
+	fail := func(format string, args ...any) error {
+		<-stderrDone
+		base := fmt.Errorf(format, args...)
+		if tail := stderrLog.String(); tail != "" {
+			return fmt.Errorf("%w — pi stderr: %s", base, truncateStr(tail, 600))
+		}
+		return base
+	}
+
 	// Send the prompt command (pi RPC protocol)
 	promptCmd := map[string]interface{}{
 		"type":    "prompt",
-		"message": msgBuilder.String(),
+		"message": prompt,
 	}
 	reqBytes, _ := json.Marshal(promptCmd)
 	reqBytes = append(reqBytes, '\n')
 	if _, err := stdin.Write(reqBytes); err != nil {
-		return fmt.Errorf("write stdin: %w", err)
+		return fail("write stdin: %v", err)
 	}
 	// Don't close stdin yet — pi expects the pipe to stay open for potential
 	// follow-up commands. We'll let it close when the process exits.
@@ -207,6 +336,8 @@ func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, c
 
 	var mu sync.Mutex
 	filesWritten := map[string]bool{}
+	// toolCallId -> path, populated from tool_execution_start.
+	toolPaths := map[string]string{}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -271,14 +402,15 @@ func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, c
 
 		case "tool_execution_start":
 			toolName, _ := raw["toolName"].(string)
-			args, _ := raw["args"].(map[string]interface{})
-			path := ""
-			if args != nil {
-				if p, ok := args["path"].(string); ok {
-					path = p
-				} else if p, ok := args["file_path"].(string); ok {
-					path = p
-				}
+			callID, _ := raw["toolCallId"].(string)
+			path := toolPath(raw)
+			// Remember the path against the call id. Verified against pi 0.84.2:
+			// tool_execution_end carries `args: {}`, so the path is only ever
+			// available on the start event.
+			if path != "" && callID != "" {
+				mu.Lock()
+				toolPaths[callID] = path
+				mu.Unlock()
 			}
 			job.append(StreamEvent{Type: "tool", Tool: map[string]interface{}{
 				"name":   toolName,
@@ -288,14 +420,12 @@ func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, c
 
 		case "tool_execution_end":
 			toolName, _ := raw["toolName"].(string)
-			args, _ := raw["args"].(map[string]interface{})
-			path := ""
-			if args != nil {
-				if p, ok := args["path"].(string); ok {
-					path = p
-				} else if p, ok := args["file_path"].(string); ok {
-					path = p
-				}
+			callID, _ := raw["toolCallId"].(string)
+			path := toolPath(raw)
+			if path == "" && callID != "" {
+				mu.Lock()
+				path = toolPaths[callID]
+				mu.Unlock()
 			}
 			job.append(StreamEvent{Type: "tool", Tool: map[string]interface{}{
 				"name":   toolName,
@@ -308,6 +438,18 @@ func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, c
 				filesWritten[path] = true
 				mu.Unlock()
 			}
+
+		// Lifecycle events exist so the teacher is not staring at a still screen.
+		// They carry a stable token, never a translated string: the UI owns the
+		// wording and the app is bilingual.
+		case "agent_start", "turn_start":
+			job.append(StreamEvent{Type: "status", Text: "thinking"})
+
+		case "auto_retry_start":
+			job.append(StreamEvent{Type: "status", Text: "retrying"})
+
+		case "compaction_start":
+			job.append(StreamEvent{Type: "status", Text: "compacting"})
 
 		case "agent_end", "agent_settled":
 			// Agent finished — emit file_changed for written files, then done
@@ -330,6 +472,7 @@ func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, c
 	scanErr := scanner.Err()
 	stdin.Close()
 	cmdErr := cmd.Wait()
+	<-stderrDone
 
 	if full.Len() > 0 {
 		// Got some text — emit done
@@ -346,10 +489,10 @@ func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, c
 	}
 
 	if scanErr != nil {
-		return fmt.Errorf("pi stdout scan: %w", scanErr)
+		return fail("pi stdout scan: %v", scanErr)
 	}
 	if cmdErr != nil {
-		return fmt.Errorf("pi exited: %w", cmdErr)
+		return fail("pi exited: %v", cmdErr)
 	}
 	job.append(StreamEvent{Type: "done", Reply: ""})
 	return nil

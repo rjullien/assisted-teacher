@@ -1,13 +1,15 @@
 {
+  "defaultProvider": "bifrost",
+  "defaultModel": "bifrost-default",
   "defaultProjectTrust": "never",
+  "defaultTools": ["read", "edit", "write", "grep", "find", "ls"],
+  "quietStartup": true,
+  "enableInstallTelemetry": false,
   "compaction": {
     "enabled": true
   },
   "retry": {
     "enabled": true,
     "maxRetries": 2
-  },
-  "tools": {
-    "allowlist": ["read", "write", "edit", "grep", "find", "ls"]
   }
 }

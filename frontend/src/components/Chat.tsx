@@ -72,6 +72,18 @@ export interface ChatSession {
   lastSeq: number
 }
 
+/**
+ * Progress tokens emitted by the pi bridge, mapped to i18n keys.
+ * The backend never sends a translated string — the UI is bilingual and owns
+ * the wording. Unknown tokens are dropped, not rendered.
+ */
+const PI_STATUS_KEYS: Record<string, string> = {
+  starting: 'piChat.statusStarting',
+  thinking: 'piChat.statusThinking',
+  retrying: 'piChat.statusRetrying',
+  compacting: 'piChat.statusCompacting',
+}
+
 export const emptyChatSession: ChatSession = {
   messages: [],
   input: '',
@@ -250,6 +262,16 @@ export default function Chat({
         jobWroteFiles.current = false
         setToolStatus('')
         break
+
+      // Lifecycle progress from the pi bridge. Stable tokens, translated here.
+      // An unknown token is ignored rather than shown raw, so a newer backend
+      // can add tokens without an old bundle displaying gibberish.
+      case 'status': {
+        const key = ev.text || ''
+        const label = PI_STATUS_KEYS[key]
+        if (label) setToolStatus(t(label))
+        break
+      }
 
       case 'tool': {
         if (!ev.tool) break
