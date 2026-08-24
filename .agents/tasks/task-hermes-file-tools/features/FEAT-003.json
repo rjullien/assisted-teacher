@@ -1,0 +1,28 @@
+{
+  "id": "FEAT-003",
+  "type": "feat",
+  "description": "Make the frontend render the new backend tool events properly. frontend/src/tools.ts currently recognises only the pi tool names read/write/edit, so the read_file, write_file and patch_file events emitted by the new Hermes loop would fall through to the generic transient '🔧 {name}' status line instead of the labelled audit trail in the thread. This feature is independent of FEAT-002 and touches only the frontend.",
+  "status": "pending",
+  "steps": [
+    "Read frontend/src/tools.ts, frontend/src/tools.test.ts and the 'tool' case of handleEvent in frontend/src/components/Chat.tsx (around lines 339-365) before editing.",
+    "In frontend/src/tools.ts, introduce two small name sets (read-like: 'read', 'read_file'; write-like: 'write', 'edit', 'write_file', 'patch_file') and use them in both isFileOp and toolLabel so the new names get the existing piChat.toolRead / piChat.toolWrite labels. Keep the existing behaviour for unnamed and unknown payloads untouched (the '🔧 outil…' regression guard must stay green).",
+    "In frontend/src/components/Chat.tsx, extend the jobWroteFiles.current condition so write_file and patch_file with status 'done' also mark the job as having written files, reusing the write-like set exported from tools.ts rather than duplicating the literals. Do NOT touch buildDeskPrompt, MAX_INLINED_FILE_CHARS or the file_changed handling.",
+    "Add cases to frontend/src/tools.test.ts asserting: isFileOp is true for {name:'read_file', path:'a.md'}, {name:'write_file', path:'a.md'} and {name:'patch_file', path:'a.md'}, and false when the path is empty; toolLabel returns '📄 Lecture de a.md' for read_file and '✏️ Écriture de a.md' for write_file and patch_file (fr bundle, same style as the existing assertions).",
+    "Add a Chat.test.tsx case in the existing style asserting that a tool event {name:'write_file', path:'B1/unit5.md', status:'done'} appears in the thread as a tool message (not only as the transient status line), and that {name:'file_changed', path:...} still triggers onFileChanged and is not displayed.",
+    "Verify by mutation: revert the tools.ts name sets to the old literals and confirm the new tools.test.ts and Chat.test.tsx assertions fail, then restore. Record which test caught it in findings.",
+    "Run npx vitest --run and npm run build, then commit with a conventional message such as 'feat: label read_file/write_file/patch_file tool events in the chat thread'. Do not push, do not touch version.json."
+  ],
+  "acceptance_criteria": [
+    "cd frontend && npx vitest --run passes, including the new assertions, with the pre-existing 79 tests still green",
+    "cd frontend && npm run build succeeds",
+    "isFileOp returns true for read_file, write_file and patch_file when a path is present, and toolLabel gives them the existing read/write labels in fr and en",
+    "A write_file tool event with status done is rendered as a tool message in the thread and marks jobWroteFiles",
+    "buildDeskPrompt and MAX_INLINED_FILE_CHARS are unchanged"
+  ],
+  "verification": [
+    "cd frontend && npx vitest --run",
+    "cd frontend && npm run build"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

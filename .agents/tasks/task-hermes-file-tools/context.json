@@ -1,0 +1,30 @@
+{
+  "project_type": "Web app: React + Vite + TypeScript frontend, Go backend (REST + WebSocket streaming bridge to the Hermes/Lya agent gateway and to the local pi agent)",
+  "language": "Go 1.23 (toolchain 1.25.1 installed) backend, TypeScript/React frontend",
+  "build_system": "Go modules for backend (module github.com/rjullien/opencode-usage-tracker/cours-ia/backend), npm + Vite for frontend, root Makefile wraps both (make test, make build). Node 18 requires: export PATH=\"$HOME/.nvm/versions/node/v18.20.8/bin:$PATH\"",
+  "test_framework": "Backend: standard Go testing with httptest.Server fakes for Hermes SSE (backend/internal/bridge/hermes_test.go) and a re-exec self-fake for pi (pi_test.go). Frontend: Vitest + React Testing Library (frontend/src/**/*.test.ts(x)).",
+  "build_command": "cd backend && go build ./... && go vet ./... && gofmt -l . ; cd ../frontend && npm run build",
+  "test_command": "cd backend && go test ./... -count=1 -timeout=90s ; cd ../frontend && npx vitest --run",
+  "verification_instructions": "1. export PATH=\"$HOME/.nvm/versions/node/v18.20.8/bin:$PATH\"  2. cd backend && go build ./... && go vet ./... && gofmt -l . && go test ./... -count=1 -timeout=90s (gofmt must print nothing)  3. cd frontend && npx vitest --run && npm run build. Baseline on branch feat/hermes-file-tools (from main @ b138f44 release: v1.9.1) is GREEN: backend 3 packages ok, frontend 8 files / 79 tests passing.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "Repo already cloned at /projects/sandbox/assisted-teacher, frontend/node_modules already installed, Go module cache warm. Work happens on the existing branch feat/hermes-file-tools (already created and checked out). No npm ci needed unless node_modules is missing.",
+  "environment_constraints": "Network is OPEN_INTERNET but the k3s cluster and the real Hermes gateway are NOT reachable (internal DNS does not resolve, public endpoint is behind Authelia and returns 302). No real LLM tokens may be spent. Every behaviour must therefore be proven with httptest.Server fakes only. Whether the real Hermes honours the OpenAI `tools` request parameter CANNOT be verified here: do not claim it works against real Hermes anywhere in code comments, commit messages or docs.",
+  "contribution_requirements": "AGENTS.md: conventional commits (feat:, fix:, chore:), feature branch then PR then squash merge. Do NOT bump version.json, do NOT tag, do NOT release, do NOT push (the orchestrator pushes). Comments and UI strings: FR for teacher-facing text, code comments in the existing style (explain the why, reference the failure they prevent).",
+  "key_patterns": "backend/internal/bridge/hermes.go: Job/Hub detached-job pattern; StreamEvent{Type: delta|tool|done|error|meta}; callHermesStream is currently SINGLE-TURN (builds []map[string]string{system?, user}, posts once with {messages, provider:\"custom\", stream:true}, scans SSE lines, forwards `event: hermes.tool.progress` frames verbatim as Type:\"tool\", and on `data: [DONE]` appends Type:\"done\" with the accumulated reply). b.workDir + b.safePath(rel) already exist (v1.9.0) and are the ONLY path validator to use. handleToolFileWrite + writeToolNames implement the v1.9.0 opportunistic write interception, gated on mode==\"desk\" inside the SSE loop; that path must stay. Frontend: Chat.tsx sends {type:\"prompt\", content, system, currentFile, mode:\"desk\"|\"pi\"}, LyaChat.tsx sends mode:\"lya\"; buildDeskPrompt (Chat.tsx, cap MAX_INLINED_FILE_CHARS = 20000) inlines the open file and MUST NOT be removed; frontend/src/tools.ts normalizeTool/isFileOp/toolLabel normalize tool payloads, and Chat.tsx handles the synthetic {name:\"file_changed\", path} tool event by calling onFileChanged.",
+  "relevant_files": [
+    "backend/internal/bridge/hermes.go",
+    "backend/internal/bridge/hermes_test.go",
+    "backend/internal/bridge/pi.go",
+    "backend/main.go",
+    "frontend/src/tools.ts",
+    "frontend/src/tools.test.ts",
+    "frontend/src/components/Chat.tsx",
+    "frontend/src/components/Chat.test.tsx",
+    "frontend/src/components/LyaChat.tsx",
+    "frontend/src/i18n/fr.json",
+    "frontend/src/i18n/en.json",
+    "AGENTS.md",
+    "Makefile"
+  ],
+  "directory_structure": "backend/main.go wires flags (WORKSPACE_DIR default ./workspace) and mounts bridge.NewHermesBridge(url, key, workDir) plus bridge.NewPiBridge; backend/internal/api holds files.go (REST file CRUD, path-jailed) and programme.go; backend/internal/bridge holds hermes.go (Lya, this task) and pi.go (untouchable); backend/internal/export holds PDF/DOCX export; frontend/src/components holds the React UI; workspace/ holds sample course files (B1/, Vocabulaire/); .agents/tasks holds prior task state."
+}

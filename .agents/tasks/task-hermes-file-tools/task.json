@@ -1,0 +1,11 @@
+{
+  "task_id": "task-hermes-file-tools",
+  "task_description": "Give Lya real file access on the backend in mode Desk: make the Hermes bridge multi-turn (OpenAI-style function calling) and implement read_file, write_file and patch_file tools jailed to WORKSPACE_DIR, so the teacher can say 'update this file' and Lya can request it, read it and complete it. Must degrade silently to today's single-turn behaviour if Hermes ignores the tools parameter, must not touch mode Lya or mode Pi, and must not remove the v1.9.1 prompt inlining fallback. Branch: feat/hermes-file-tools.",
+  "status": "in_progress",
+  "feature_order": [
+    "FEAT-001",
+    "FEAT-002",
+    "FEAT-003"
+  ],
+  "blocked_reason": null
+}
