@@ -1,7 +1,14 @@
 {
   "task_id": "task-fill-test-gaps",
   "task_description": "Fill identified test coverage gaps: Chat session persistence, identity in system prompts, LyaChat tests, Toolbar pi button, api.ts AuthWebSocket, and backend ProgrammeHandler",
-  "status": "in_progress",
+  "status": "completed",
   "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003"],
-  "blocked_reason": null
+  "blocked_reason": null,
+  "verification": {
+    "build": "pass",
+    "tests": "pass",
+    "test_quality": "pass",
+    "docker_build": "skipped",
+    "summary": "All 75 frontend tests pass (14 new: 2 Chat, 5 LyaChat, 1 Toolbar, 6 api.ts). All backend tests pass (8 new ProgrammeHandler tests). Frontend build succeeds. All new tests exercise real code paths and would fail if the implementation were reverted."
+  }
 }
