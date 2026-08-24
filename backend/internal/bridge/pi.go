@@ -235,6 +235,19 @@ func (b *PiBridge) piArgs() []string {
 		// Ignore any .pi/ the teacher could have dropped in the workspace via
 		// PUT /api/file. Belt and braces with defaultProjectTrust: never.
 		"--no-approve",
+		// Do NOT remove. Context files (AGENTS.md, AGENTS.override.md,
+		// CLAUDE.md) are loaded INDEPENDENTLY of project trust, so
+		// defaultProjectTrust: never does not cover them.
+		//
+		// The workspace is writable by the teacher (PUT /api/file), so anything
+		// in it is untrusted input. Measured against pi 0.84.2 with a recording
+		// stub LLM: without this flag a marker placed in workspace/AGENTS.md
+		// reaches the prompt sent to the model; with it, it does not.
+		//
+		// The flag is absent from pi's published docs but functional. That makes
+		// it fragile across upgrades, which is why TestPi_DisablesWorkspaceContextFiles
+		// asserts it on the real argv.
+		"--no-context-files",
 	}
 	if b.provider != "" {
 		args = append(args, "--provider", b.provider)

@@ -315,7 +315,7 @@ func TestPi_ToolAllowlistExcludesShells(t *testing.T) {
 			t.Errorf("%q reached pi's tool list: %s", forbidden, joined)
 		}
 	}
-	for _, required := range []string{"--mode", "rpc", "--no-session", "--tools", "--no-approve"} {
+	for _, required := range []string{"--mode", "rpc", "--no-session", "--tools", "--no-approve", "--no-context-files"} {
 		if !strings.Contains(joined, required) {
 			t.Errorf("missing required argument %q in %s", required, joined)
 		}
@@ -334,6 +334,33 @@ func TestPi_ToolAllowlistExcludesShells(t *testing.T) {
 	if len(got) != len(piAllowedTools) {
 		t.Errorf("--tools = %v, want exactly %v", got, piAllowedTools)
 	}
+}
+
+// Security: the workspace is writable by the teacher through PUT /api/file, so
+// an AGENTS.md dropped in it is untrusted input. pi loads context files
+// regardless of project trust, so defaultProjectTrust: never does NOT cover
+// them — only --no-context-files does.
+//
+// Measured against pi 0.84.2 with a recording stub LLM: without the flag, a
+// marker in workspace/AGENTS.md reaches the prompt sent to the model. v1.8.0
+// shipped without it. This test exists so that cannot happen twice.
+func TestPi_DisablesWorkspaceContextFiles(t *testing.T) {
+	argvFile := t.TempDir() + "/argv"
+	b := newFakePiBridge(t, "happy", fakePiArgsEnv+"="+argvFile)
+	runScenario(t, b)
+
+	raw, err := os.ReadFile(argvFile)
+	if err != nil {
+		t.Fatalf("fake pi did not record argv: %v", err)
+	}
+	argv := strings.Split(string(raw), "\n")
+	for _, a := range argv {
+		if a == "--no-context-files" {
+			return
+		}
+	}
+	t.Errorf("--no-context-files is missing: a workspace AGENTS.md would reach the model.\nargv = %s",
+		strings.Join(argv, " "))
 }
 
 // The bridge must not send an empty system preamble as a stray separator.
