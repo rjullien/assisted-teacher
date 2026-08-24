@@ -5,9 +5,15 @@ import { useI18n } from '../i18n'
 
 interface ChatMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'tool'
   content: string
   isStreaming?: boolean
+}
+
+interface ToolEvent {
+  name: string
+  status?: string
+  path?: string
 }
 
 interface StreamEvent {
@@ -18,6 +24,7 @@ interface StreamEvent {
   error?: string
   detail?: string
   jobId?: string
+  tool?: ToolEvent
 }
 
 /**
@@ -28,11 +35,29 @@ interface StreamEvent {
 
 interface LyaChatProps {
   userName?: string
+  messages?: ChatMessage[]
+  onMessagesChange?: (msgs: ChatMessage[]) => void
 }
 
-export default function LyaChat({ userName }: LyaChatProps) {
+export type { ChatMessage as LyaChatMessage }
+
+export default function LyaChat({ userName, messages: externalMessages, onMessagesChange }: LyaChatProps) {
   const { t } = useI18n()
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [internalMessages, setInternalMessages] = useState<ChatMessage[]>([])
+  
+  // Use external state if provided, otherwise fall back to internal
+  const messages = externalMessages ?? internalMessages
+  const messagesRef = useRef<ChatMessage[]>(messages)
+  messagesRef.current = messages
+
+  const setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>> = useCallback((update) => {
+    if (onMessagesChange) {
+      const newVal = typeof update === 'function' ? update(messagesRef.current) : update
+      onMessagesChange(newVal)
+    } else {
+      setInternalMessages(update)
+    }
+  }, [onMessagesChange])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [connected, setConnected] = useState(false)
@@ -45,6 +70,24 @@ export default function LyaChat({ userName }: LyaChatProps) {
     switch (ev.type) {
       case 'meta':
         currentJobId.current = ev.jobId || null
+        break
+
+      case 'tool':
+        if (ev.tool) {
+          const { name, path } = ev.tool
+          let toolText = ''
+          if (name === 'read' && path) {
+            toolText = t('piChat.toolRead', { path })
+          } else if ((name === 'write' || name === 'edit') && path) {
+            toolText = t('piChat.toolWrite', { path })
+          } else {
+            toolText = t('piChat.toolOther', { name: name || '?' })
+          }
+          setMessages((prev) => [
+            ...prev,
+            { id: `tool-${Date.now()}-${Math.random()}`, role: 'tool', content: toolText },
+          ])
+        }
         break
 
       case 'delta':
@@ -103,7 +146,7 @@ export default function LyaChat({ userName }: LyaChatProps) {
         currentJobId.current = null
         break
     }
-  }, [])
+  }, [t, setMessages])
 
   // WebSocket connection
   useEffect(() => {
@@ -201,7 +244,11 @@ export default function LyaChat({ userName }: LyaChatProps) {
         )}
         {messages.map((msg) => (
           <div key={msg.id} className={`lya-message ${msg.role}`}>
-            <ReactMarkdown>{msg.content}</ReactMarkdown>
+            {msg.role === 'tool' ? (
+              <span className="chat-tool-event">{msg.content}</span>
+            ) : (
+              <ReactMarkdown>{msg.content}</ReactMarkdown>
+            )}
             {msg.role === 'assistant' && !msg.isStreaming && (
               <div className="lya-message-actions">
                 <button onClick={() => navigator.clipboard.writeText(msg.content)}>

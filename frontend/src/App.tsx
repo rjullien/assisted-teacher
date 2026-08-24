@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import FileTree from './components/FileTree'
 import Editor from './components/Editor'
 import Chat from './components/Chat'
-import LyaChat from './components/LyaChat'
+import LyaChat, { type LyaChatMessage } from './components/LyaChat'
 import MobileLayout from './components/MobileLayout'
 import ProgrammeDrawer from './components/ProgrammeDrawer'
 import Toolbar, { type Niveau, type AppMode } from './components/Toolbar'
@@ -86,6 +86,7 @@ export default function App() {
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false)
   const [userName, setUserName] = useState<string>('')
   const [piAvailable, setPiAvailable] = useState(false)
+  const [lyaMessages, setLyaMessages] = useState<LyaChatMessage[]>([])
   const flushRef = useRef<(() => Promise<void>) | null>(null)
 
   // Derived: is the workspace layout visible?
@@ -270,7 +271,7 @@ export default function App() {
               onFileChanged={handleFileChanged}
             />
           ) : (
-            <LyaChat userName={userName} />
+            <LyaChat userName={userName} messages={lyaMessages} onMessagesChange={setLyaMessages} />
           )}
         </div>
       </I18nContext.Provider>
@@ -323,7 +324,7 @@ export default function App() {
             </Allotment>
           </div>
         ) : (
-          <LyaChat userName={userName} />
+          <LyaChat userName={userName} messages={lyaMessages} onMessagesChange={setLyaMessages} />
         )}
         <ProgrammeDrawer
           open={programmeDrawerOpen}
