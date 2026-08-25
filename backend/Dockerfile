@@ -11,11 +11,16 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o assisted-teacher .
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM alpine:3.22
 
+# curl and bash are required by the pi web-search skill: the skill calls the
+# Brave API with curl from a shell, because pi has no built-in web_search tool.
+# BusyBox ash would mostly do, but pi's bash tool expects a real bash.
 RUN apk add --no-cache \
     ca-certificates \
     pandoc \
     nodejs \
     npm \
+    curl \
+    bash \
     && rm -rf /var/cache/apk/*
 
 # Install Typst
@@ -32,7 +37,8 @@ COPY --from=build /app/assisted-teacher /usr/local/bin/assisted-teacher
 # The backend reads these from PROGRAMMES_DIR (fallback: WORKSPACE_DIR/.programmes).
 COPY --from=build /app/programmes /data/programmes
 
-# Pi configuration: settings.json (trust=never, no bash) + models.json template
+# Pi configuration: settings.json (trust=never) + models.json template +
+# skills/ (web-search, copied to $HOME/.pi/agent/skills by entrypoint.sh)
 COPY pi-config/ /data/pi-config/
 
 RUN mkdir -p /workspace

@@ -178,11 +178,14 @@ type HermesBridge struct {
 	// turned on for one deployment when the shape of her frames has to be
 	// established rather than assumed. See hermesTraceEventsEnv.
 	traceEvents bool
-	hub         *Hub
-	upgrader    websocket.Upgrader
+	// brave is the Brave Search client. nil when BRAVE_API_KEY is unset — in that
+	// case web_search is not declared to the model at all.
+	brave    *BraveSearch
+	hub      *Hub
+	upgrader websocket.Upgrader
 }
 
-func NewHermesBridge(hermesURL, apiKey, workDir string) *HermesBridge {
+func NewHermesBridge(hermesURL, apiKey, workDir string, brave *BraveSearch) *HermesBridge {
 	// TrimSpace is critical: Infisical/K8s secrets often carry a trailing \n,
 	// which makes the Bearer token mismatch on the gateway side.
 	key := strings.TrimSpace(apiKey)
@@ -199,6 +202,7 @@ func NewHermesBridge(hermesURL, apiKey, workDir string) *HermesBridge {
 		workDir:     workDir,
 		fsPrefixes:  prefixes,
 		traceEvents: trace,
+		brave:       brave,
 		hub:         NewHub(),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
@@ -594,6 +598,28 @@ var hermesFileTools = []map[string]interface{}{
 	},
 }
 
+// hermesWebSearchTool is the tool definition for web search via Brave. Declared
+// separately from hermesFileTools because web search is available in ALL modes
+// (it is read-only — no workspace mutation), whereas the file tools are gated on
+// mode desk + sub-mode direct.
+var hermesWebSearchTool = map[string]interface{}{
+	"type": "function",
+	"function": map[string]interface{}{
+		"name":        "web_search",
+		"description": "Recherche sur le web via Brave Search. Utilise cet outil pour trouver des informations récentes, des définitions, des exemples ou du contenu pédagogique que tu ne connais pas. Si la recherche Brave échoue, utilise tes propres capacités de recherche.",
+		"parameters": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"query": map[string]interface{}{
+					"type":        "string",
+					"description": "Requête de recherche web, en français ou en anglais selon le contenu recherché. Maximum 400 caractères.",
+				},
+			},
+			"required": []string{"query"},
+		},
+	},
+}
+
 // Desk sub-modes. In "insert" Lya only answers in the chat and the teacher
 // inserts what they keep by hand; in "direct" Lya updates the working file
 // herself through the file tools. "legacy" is neither: it is what an absent or
@@ -775,7 +801,26 @@ func (b *HermesBridge) patchFileTool(args fileToolArgs) (string, string, error) 
 // execFileTool decodes the model's arguments string and dispatches to the
 // matching executor. Every failure (bad JSON, unknown tool, refused path) comes
 // back as an error the model can act on, never as a job-level error event.
-func (b *HermesBridge) execFileTool(name, rawArgs string) (string, string, error) {
+func (b *HermesBridge) execFileTool(ctx context.Context, name, rawArgs string) (string, string, error) {
+	// web_search is handled separately: its arguments schema differs from file
+	// tools, and it never mutates the workspace (changedPath is always "").
+	if name == "web_search" {
+		if b.brave == nil {
+			return "", "", fmt.Errorf("web_search indisponible : BRAVE_API_KEY non configurée")
+		}
+		var searchArgs struct {
+			Query string `json:"query"`
+		}
+		if rawArgs != "" {
+			json.Unmarshal([]byte(rawArgs), &searchArgs)
+		}
+		if searchArgs.Query == "" {
+			return "", "", fmt.Errorf("paramètre query manquant pour web_search")
+		}
+		result := b.brave.Search(ctx, searchArgs.Query)
+		return result, "", nil
+	}
+
 	var args fileToolArgs
 	if rawArgs == "" {
 		rawArgs = "{}"
@@ -791,7 +836,7 @@ func (b *HermesBridge) execFileTool(name, rawArgs string) (string, string, error
 	case "patch_file":
 		return b.patchFileTool(args)
 	default:
-		return "", "", fmt.Errorf("outil inconnu : %s (disponibles : read_file, write_file, patch_file)", name)
+		return "", "", fmt.Errorf("outil inconnu : %s (disponibles : read_file, write_file, patch_file, web_search)", name)
 	}
 }
 
@@ -1193,8 +1238,15 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 			"provider":     "custom",
 			"stream":       true,
 		}
-		if toolsEnabled {
-			payload["tools"] = hermesFileTools
+		if toolsEnabled || b.brave != nil {
+			var tools []map[string]interface{}
+			if toolsEnabled {
+				tools = append(tools, hermesFileTools...)
+			}
+			if b.brave != nil {
+				tools = append(tools, hermesWebSearchTool)
+			}
+			payload["tools"] = tools
 			payload["tool_choice"] = "auto"
 		}
 		body, _ := json.Marshal(payload)
@@ -1238,12 +1290,29 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 
 		sawToolCalls = true
 		if !toolsEnabled {
-			// No tools were declared, so tool_calls here are unsolicited. Executing
-			// them would let mode Lya (or a job without workspace) touch files.
-			log.Printf("hermes: refusing %d unsolicited tool call(s) — file tools are only enabled in mode desk, sub-mode direct (mode=%s deskMode=%s workDir=%q)",
-				len(turn.toolCalls), mode, deskMode, b.workDir)
-			job.append(StreamEvent{Type: "done", Reply: full.String()})
-			return nil
+			// File tools are not enabled in this mode. However, web_search may
+			// have been declared (brave != nil). Filter: keep only web_search
+			// calls, refuse file tool calls.
+			if b.brave == nil {
+				log.Printf("hermes: refusing %d unsolicited tool call(s) — file tools are only enabled in mode desk, sub-mode direct (mode=%s deskMode=%s workDir=%q)",
+					len(turn.toolCalls), mode, deskMode, b.workDir)
+				job.append(StreamEvent{Type: "done", Reply: full.String()})
+				return nil
+			}
+			// Keep only web_search calls
+			var allowed []*toolCallAccum
+			for _, tc := range turn.toolCalls {
+				if tc.name == "web_search" {
+					allowed = append(allowed, tc)
+				} else {
+					log.Printf("hermes: refusing file tool %q in mode %s (only web_search allowed without file tools)", tc.name, mode)
+				}
+			}
+			if len(allowed) == 0 {
+				job.append(StreamEvent{Type: "done", Reply: full.String()})
+				return nil
+			}
+			turn.toolCalls = allowed
 		}
 
 		// Feed the assistant turn back verbatim: the OpenAI protocol requires the
@@ -1277,14 +1346,29 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 			// UI promises one working file, so the teacher gets the deviation in the
 			// thread and the model gets it in the tool result.
 			outside := outsideWorkingFile(tc.name, path, currentFile)
+			// web_search has a query where the file tools have a path, so its
+			// events carry the query instead — see searchToolEventPayload.
+			isSearch := tc.name == "web_search"
+			query := ""
+			if isSearch {
+				query = queryFromRawArgs(rawArgs)
+			}
+			startEvent := toolEventPayload(tc.name, path, "running", "", outside)
+			if isSearch {
+				startEvent = searchToolEventPayload(query, "running", "")
+			}
 			// Report before executing so the teacher sees the action live, even if
 			// the tool is slow or fails.
-			job.append(StreamEvent{Type: "tool", Tool: toolEventPayload(tc.name, path, "running", "", outside)})
+			job.append(StreamEvent{Type: "tool", Tool: startEvent})
 
-			result, changedPath, execErr := b.execFileTool(tc.name, rawArgs)
+			result, changedPath, execErr := b.execFileTool(ctx, tc.name, rawArgs)
 			if execErr != nil {
 				log.Printf("hermes: tool %s path=%q failed: %v", tc.name, path, execErr)
-				job.append(StreamEvent{Type: "tool", Tool: toolEventPayload(tc.name, path, "error", execErr.Error(), outside)})
+				errEvent := toolEventPayload(tc.name, path, "error", execErr.Error(), outside)
+				if isSearch {
+					errEvent = searchToolEventPayload(query, "error", execErr.Error())
+				}
+				job.append(StreamEvent{Type: "tool", Tool: errEvent})
 				messages = append(messages, map[string]interface{}{
 					"role":         "tool",
 					"tool_call_id": tc.id,
@@ -1305,7 +1389,11 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 					result += fmt.Sprintf("\n\nAttention : le fichier de travail de l'enseignant est %s, et tu viens de modifier %s. Dis-le explicitement dans ta réponse.", currentFile, path)
 				}
 			}
-			job.append(StreamEvent{Type: "tool", Tool: toolEventPayload(tc.name, path, "done", "", outside)})
+			doneEvent := toolEventPayload(tc.name, path, "done", "", outside)
+			if isSearch {
+				doneEvent = searchToolEventPayload(query, "done", "")
+			}
+			job.append(StreamEvent{Type: "tool", Tool: doneEvent})
 			if changedPath != "" {
 				wroteFiles = true
 				// Same synthetic shape as the v1.9.0 write interception, so
@@ -1318,11 +1406,16 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 			messages = append(messages, map[string]interface{}{
 				"role":         "tool",
 				"tool_call_id": tc.id,
-				// Only read results can be large enough to be worth cutting, and only
-				// they can be cut without lying: a write confirmation replaced by the
-				// budget notice makes a landed write indistinguishable from a suppressed
-				// one, and the model then rewrites the file it just wrote.
-				"content": budgetToolResult(result, &toolResultChars, tc.name != "read_file"),
+				// Only DATA results — a file read, a search answer — are large enough
+				// to be worth cutting, and only they can be cut without lying. A write
+				// confirmation replaced by the budget notice makes a landed write
+				// indistinguishable from a suppressed one, and the model then rewrites
+				// the file it just wrote, so those stay exempt.
+				//
+				// web_search is budgeted rather than exempt: exempt messages are
+				// hard-capped at maxConfirmationChars, which would cut the last result
+				// mid-sentence with no notice, while the budget path says it cut.
+				"content": budgetToolResult(result, &toolResultChars, tc.name != "read_file" && tc.name != "web_search"),
 			})
 		}
 	}
@@ -1374,6 +1467,37 @@ func toolEventPayload(name, path, status, errMsg string, outsideWorkingFile bool
 		payload["outsideWorkingFile"] = true
 	}
 	return payload
+}
+
+// searchToolEventPayload is toolEventPayload for web_search, which has a query
+// instead of a path.
+//
+// The query is carried so the thread can say WHAT was searched. Reusing the
+// "path" key for it would have been shorter and wrong: Chat.tsx keys the editor
+// reload and the "workspace touched" decision off path, so a search would have
+// looked like a file operation.
+func searchToolEventPayload(query, status, errMsg string) map[string]interface{} {
+	payload := map[string]interface{}{
+		"name":   "web_search",
+		"status": status,
+		"query":  query,
+	}
+	if errMsg != "" {
+		payload["error"] = errMsg
+	}
+	return payload
+}
+
+// queryFromRawArgs best-effort extracts the "query" argument of a web_search
+// call, for the tool event. A malformed payload must not stop us reporting it.
+func queryFromRawArgs(rawArgs string) string {
+	var args struct {
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal([]byte(rawArgs), &args); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(args.Query)
 }
 
 // outsideWorkingFile reports a write landing somewhere else than the file the

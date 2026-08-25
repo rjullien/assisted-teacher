@@ -118,6 +118,8 @@
     "toolWrite": "✏️ Écriture de {path}",
     "toolReading": "📄 Lecture de {path} en cours…",
     "toolWriting": "✏️ Écriture de {path} en cours…",
+    "toolSearching": "🔍 Recherche web : {query}…",
+    "toolSearched": "🔍 Recherche web : {query}",
     "toolOther": "🔧 {name}",
     "toolUnknown": "🔧 outil…",
     "toolFailed": "⚠️ Échec sur {path} : {error}",

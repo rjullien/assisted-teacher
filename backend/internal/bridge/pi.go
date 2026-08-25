@@ -22,15 +22,39 @@ import (
 // infrastructure as Hermes.
 //
 // Pi RPC protocol docs: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md
-// piAllowedTools is the strict allowlist passed to `pi --tools`.
-// `bash` and `powershell` are deliberately excluded.
-var piAllowedTools = []string{"read", "edit", "write", "grep", "find", "ls"}
+
+// piAllowedTools is the allowlist passed to `pi --tools`.
+//
+// `bash` is INCLUDED, reversing the v1.8.0 decision. It is the only way pi can
+// search the web: pi has no built-in web_search tool and no custom-tool API
+// (earendil-works/pi#190 is a proposal, not a release), so the official
+// brave-search skill works the only way a skill can — `curl` from a shell.
+// Without bash, pi cannot search at all, while Lya can.
+//
+// What this costs, stated plainly rather than left implicit: a shell defeats
+// every path boundary in this file. cmd.Dir and safePath() bound the FILE TOOLS,
+// not a subprocess, so with bash the workspace jail is advisory. What still
+// holds: the container filesystem is the blast radius (no host mount beyond the
+// workspace PVC), --no-approve and defaultProjectTrust: never keep a teacher-
+// uploaded .pi/ from being honoured, and --no-context-files keeps a teacher-
+// uploaded AGENTS.md out of the prompt.
+//
+// This list is now the COMPLETE set of pi's built-in tools, verified against
+// `pi --help` on 0.84.2: read, bash, edit, write, grep, find, ls. There is no
+// `powershell` tool in pi — the previous comment named it as if excluding it
+// meant something, and the test asserted its absence, which could never fail.
+//
+// Note that --tools is NOT validated by pi: `--tools read,jenexistepas` is
+// accepted silently (measured). So a typo here silently drops a tool instead of
+// failing at boot, which is why TestPi_ToolAllowlistIsExact pins the string.
+var piAllowedTools = []string{"read", "edit", "write", "grep", "find", "ls", "bash"}
 
 type PiBridge struct {
-	piCmd    string // path to pi binary
-	workDir  string // workspace directory (jail root)
-	provider string // provider key declared in ~/.pi/agent/models.json
-	model    string // model *name* to match (not its id — see runPi)
+	piCmd    string       // path to pi binary
+	workDir  string       // workspace directory (jail root)
+	provider string       // provider key declared in ~/.pi/agent/models.json
+	model    string       // model *name* to match (not its id — see runPi)
+	brave    *BraveSearch // Brave Search client, nil if BRAVE_API_KEY unset
 	hub      *Hub
 	upgrader websocket.Upgrader
 
@@ -41,14 +65,15 @@ type PiBridge struct {
 }
 
 // NewPiBridge creates a bridge for the pi agent.
-func NewPiBridge(piCmd, workDir, provider, model string) *PiBridge {
-	log.Printf("pi bridge: configured (cmd=%s, workDir=%s, provider=%s, model=%s, tools=%s)",
-		piCmd, workDir, provider, model, strings.Join(piAllowedTools, ","))
+func NewPiBridge(piCmd, workDir, provider, model string, brave *BraveSearch) *PiBridge {
+	log.Printf("pi bridge: configured (cmd=%s, workDir=%s, provider=%s, model=%s, tools=%s, brave=%t)",
+		piCmd, workDir, provider, model, strings.Join(piAllowedTools, ","), brave != nil)
 	return &PiBridge{
 		piCmd:    piCmd,
 		workDir:  workDir,
 		provider: provider,
 		model:    model,
+		brave:    brave,
 		hub:      NewHub(),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
@@ -202,16 +227,36 @@ func (b *PiBridge) startJob(content, systemPrompt, currentFile, mode string) *Jo
 	return job
 }
 
+// piWebSearchHint tells pi that web search exists and how to reach it.
+//
+// Necessary because a skill is loaded ON DEMAND: pi sees the skill list, but
+// nothing in a one-shot prompt makes it consider searching unless the capability
+// is named. The fallback sentence matters as much as the capability — a failed
+// curl must not end the turn with "je ne peux pas chercher".
+const piWebSearchHint = "Tu peux chercher sur le web avec la compétence /skill:web-search " +
+	"(API Brave Search, clé déjà dans BRAVE_SEARCH_API_KEY). Utilise-la pour " +
+	"vérifier un fait, trouver un document authentique ou une référence récente. " +
+	"Si la recherche échoue, dis-le et continue avec ce que tu sais."
+
 // buildPiPrompt assembles the single message sent to pi: pedagogical system
-// preamble, then the open-file context, then the teacher's text last.
+// preamble, then the web-search hint, then the open-file context, then the
+// teacher's text last.
 //
 // pi is given no conversation history — each request is one turn — so anything
 // that must be known has to be in here.
-func buildPiPrompt(systemPrompt, currentFile, content string) string {
+//
+// webSearch is false when BRAVE_API_KEY is unset: announcing a capability that
+// is not configured would make pi run a curl with an empty header and report a
+// Brave error to the teacher instead of answering.
+func buildPiPrompt(systemPrompt, currentFile, content string, webSearch bool) string {
 	var b strings.Builder
 	if systemPrompt != "" {
 		b.WriteString(systemPrompt)
 		b.WriteString("\n\n---\n\n")
+	}
+	if webSearch {
+		b.WriteString(piWebSearchHint)
+		b.WriteString("\n\n")
 	}
 	if currentFile != "" {
 		fmt.Fprintf(&b, "[Fichier ouvert : %s]\n\n", currentFile)
@@ -228,9 +273,8 @@ func (b *PiBridge) piArgs() []string {
 	args := []string{
 		"--mode", "rpc",
 		"--no-session",
-		// Strict allowlist for ALL tools — bash and powershell are deliberately
-		// absent. An agent that writes English lessons has no use for a shell,
-		// and a shell is the one tool no path boundary can contain.
+		// Explicit allowlist for ALL tools. bash is in it — see piAllowedTools
+		// for why, and for what that costs.
 		"--tools", strings.Join(piAllowedTools, ","),
 		// Ignore any .pi/ the teacher could have dropped in the workspace via
 		// PUT /api/file. Belt and braces with defaultProjectTrust: never.
@@ -269,7 +313,7 @@ func (b *PiBridge) piArgs() []string {
 
 // runPi spawns `pi --mode rpc --no-session` and streams the response.
 func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, currentFile string, toolCount *int, toolsUsed *[]string) error {
-	prompt := buildPiPrompt(systemPrompt, currentFile, content)
+	prompt := buildPiPrompt(systemPrompt, currentFile, content, b.brave != nil)
 
 	cmd := exec.CommandContext(ctx, b.piCmd, b.piArgs()...)
 	cmd.Dir = b.workDir
@@ -278,6 +322,20 @@ func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, c
 	// check, install telemetry). Inside the cluster those either hang or fail,
 	// and none of them are wanted here.
 	cmd.Env = append(cmd.Environ(), "PI_OFFLINE=1", "PI_SKIP_VERSION_CHECK=1")
+	// The web-search skill reads BRAVE_SEARCH_API_KEY — that is the name in the
+	// official skill's curl invocation, verified against
+	// brave/brave-search-skills/skills/web-search/SKILL.md. BRAVE_API_KEY is
+	// exported under its own name too, because that is what this repo and the
+	// Kubernetes secret call it and a skill copied from elsewhere may use it.
+	// Both carry the TRIMMED key (see NewBraveSearch): the skill interpolates it
+	// straight into a header, where a trailing newline would break the request
+	// with a misleading "invalid key" from Brave.
+	if b.brave != nil {
+		cmd.Env = append(cmd.Env,
+			"BRAVE_SEARCH_API_KEY="+b.brave.apiKey,
+			"BRAVE_API_KEY="+b.brave.apiKey,
+		)
+	}
 	cmd.Env = append(cmd.Env, b.testEnv...)
 
 	stdin, err := cmd.StdinPipe()

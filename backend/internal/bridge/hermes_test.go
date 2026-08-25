@@ -55,7 +55,7 @@ func TestHermesBridge_PromptAndStream(t *testing.T) {
 	hermes := mockHermesServer()
 	defer hermes.Close()
 
-	bridge := NewHermesBridge(hermes.URL, "test-key", "")
+	bridge := NewHermesBridge(hermes.URL, "test-key", "", nil)
 	server := httptest.NewServer(http.HandlerFunc(bridge.HandleWebSocket))
 	defer server.Close()
 
@@ -130,7 +130,7 @@ func TestHermesBridge_Reconnect(t *testing.T) {
 	hermes := mockHermesServer()
 	defer hermes.Close()
 
-	bridge := NewHermesBridge(hermes.URL, "test-key", "")
+	bridge := NewHermesBridge(hermes.URL, "test-key", "", nil)
 	server := httptest.NewServer(http.HandlerFunc(bridge.HandleWebSocket))
 	defer server.Close()
 
@@ -205,7 +205,7 @@ func TestHermesBridge_BadKey(t *testing.T) {
 	hermes := mockHermesServer()
 	defer hermes.Close()
 
-	bridge := NewHermesBridge(hermes.URL, "wrong-key", "")
+	bridge := NewHermesBridge(hermes.URL, "wrong-key", "", nil)
 	server := httptest.NewServer(http.HandlerFunc(bridge.HandleWebSocket))
 	defer server.Close()
 
@@ -290,7 +290,7 @@ func TestHermesBridge_FileWrite(t *testing.T) {
 	hermes := mockHermesFileWriteServer("write_file", "test/output.md", "# Hello", "done")
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	server := httptest.NewServer(http.HandlerFunc(b.HandleWebSocket))
 	defer server.Close()
 
@@ -353,7 +353,7 @@ func TestHermesBridge_FileWrite_PathTraversal(t *testing.T) {
 	hermes := mockHermesFileWriteServer("write_file", "../../etc/passwd", "malicious", "done")
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	server := httptest.NewServer(http.HandlerFunc(b.HandleWebSocket))
 	defer server.Close()
 
@@ -415,7 +415,7 @@ func TestHermesBridge_FileWrite_LyaMode(t *testing.T) {
 	hermes := mockHermesFileWriteServer("write_file", "test/output.md", "# Hello from Lya", "done")
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	server := httptest.NewServer(http.HandlerFunc(b.HandleWebSocket))
 	defer server.Close()
 
@@ -903,7 +903,7 @@ func TestHermesBridge_ToolLoop_ReadFile(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Lis B1/unite1.md")
 
 	assertNoErrorEvent(t, events)
@@ -959,7 +959,7 @@ func TestHermesBridge_ToolLoop_ReadFileTruncated(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Lis long.md")
 	assertNoErrorEvent(t, events)
 	doneEvent(t, events)
@@ -986,7 +986,7 @@ func TestHermesBridge_ToolLoop_WriteFile(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Crée B1/nouveau.md")
 
 	assertNoErrorEvent(t, events)
@@ -1018,7 +1018,7 @@ func TestHermesBridge_ToolLoop_PatchFile(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Complète le vocabulaire")
 
 	assertNoErrorEvent(t, events)
@@ -1051,7 +1051,7 @@ func TestHermesBridge_ToolLoop_PatchFileNotFound(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Patch impossible")
 
 	assertNoErrorEvent(t, events)
@@ -1084,7 +1084,7 @@ func TestHermesBridge_ToolLoop_PatchFileAmbiguous(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Remplace TODO")
 
 	assertNoErrorEvent(t, events)
@@ -1123,7 +1123,7 @@ func TestHermesBridge_ToolLoop_PathTraversalRejected(t *testing.T) {
 			}, false)
 			defer hermes.Close()
 
-			b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+			b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 			events := runDeskDirectJob(t, b, "Sors du dossier")
 
 			assertNoErrorEvent(t, events)
@@ -1161,7 +1161,7 @@ func TestHermesBridge_ToolLoop_ExtensionRejected(t *testing.T) {
 			}, false)
 			defer hermes.Close()
 
-			b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+			b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 			events := runDeskDirectJob(t, b, "Écris un script")
 
 			assertNoErrorEvent(t, events)
@@ -1190,7 +1190,7 @@ func TestHermesBridge_ToolLoop_LoopCap(t *testing.T) {
 	}, true)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Boucle")
 
 	assertNoErrorEvent(t, events)
@@ -1233,7 +1233,7 @@ func TestHermesBridge_ToolLoop_LyaModeDeclaresNoTools(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runHermesJob(t, b, "Écris un fichier", "lya")
 
 	assertNoErrorEvent(t, events)
@@ -1263,7 +1263,7 @@ func TestHermesBridge_ToolLoop_DegradesWhenToolsIgnored(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Bonjour")
 
 	assertNoErrorEvent(t, events)
@@ -1305,7 +1305,7 @@ func TestHermesBridge_ToolLoop_InsertSubModeDeclaresNoTools(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runHermesJobSub(t, b, "Écris un fichier", "desk", "insert")
 
 	assertNoErrorEvent(t, events)
@@ -1342,7 +1342,7 @@ func TestHermesBridge_FileWrite_InsertSubMode(t *testing.T) {
 	hermes := mockHermesFileWriteServer("write_file", "test/output.md", "# Hello from Lya", "done")
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runHermesJobSub(t, b, "Écris un fichier", "desk", "insert")
 
 	assertNoErrorEvent(t, events)
@@ -1384,7 +1384,7 @@ func TestHermesBridge_ToolLoop_DirectSubModeWrites(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runHermesJobSub(t, b, "Mets à jour B1/direct.md", "desk", "direct")
 
 	assertNoErrorEvent(t, events)
@@ -1420,7 +1420,7 @@ func TestHermesBridge_ToolLoop_AbsentSubModeArmsNoTools(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runHermesJobSub(t, b, "Écris legacy.md", "desk", "") // no deskMode field
 
 	assertNoErrorEvent(t, events)
@@ -1455,7 +1455,7 @@ func TestNormalizeDeskMode(t *testing.T) {
 }
 
 func TestFileToolGates(t *testing.T) {
-	b := NewHermesBridge("http://example.invalid", "k", "/tmp/workspace")
+	b := NewHermesBridge("http://example.invalid", "k", "/tmp/workspace", nil)
 	cases := []struct {
 		mode, deskMode        string
 		wantTools, wantLegacy bool
@@ -1477,7 +1477,7 @@ func TestFileToolGates(t *testing.T) {
 	}
 
 	// No workspace mounted: nothing may be written, whatever the sub-mode.
-	noWorkDir := NewHermesBridge("http://example.invalid", "k", "")
+	noWorkDir := NewHermesBridge("http://example.invalid", "k", "", nil)
 	if noWorkDir.fileToolsEnabled("desk", "direct") || noWorkDir.legacyWritesEnabled("desk", "direct") {
 		t.Error("no workDir must disable both the file tools and the legacy write path")
 	}
@@ -1498,7 +1498,7 @@ func TestHermesBridge_ToolLoop_ReadExtensionRejected(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Lis .env")
 
 	assertNoErrorEvent(t, events)
@@ -1524,7 +1524,7 @@ func TestHermesBridge_ToolLoop_WriteTooLongRejected(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Écris un énorme fichier")
 
 	assertNoErrorEvent(t, events)
@@ -1557,7 +1557,7 @@ func TestHermesBridge_ToolLoop_WriteRefusesTruncatedRewrite(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Réécris long.md")
 
 	assertNoErrorEvent(t, events)
@@ -1601,7 +1601,7 @@ func TestHermesBridge_ToolLoop_ToolResultBudget(t *testing.T) {
 	hermes := newScriptedHermes(turns, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Lis les quatre fichiers")
 
 	assertNoErrorEvent(t, events)
@@ -1647,7 +1647,7 @@ func TestHermesBridge_ToolLoop_BudgetKeepsWriteConfirmations(t *testing.T) {
 	hermes := newScriptedHermes(turns, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runHermesJobFile(t, b, "Lis trois fichiers puis écris d.md", "desk", deskModeDirect, "d.md")
 
 	assertNoErrorEvent(t, events)
@@ -1686,7 +1686,7 @@ func TestHermesBridge_ToolLoop_EchoedWriteArgumentsAreShrunk(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Écris gros.md")
 
 	assertNoErrorEvent(t, events)
@@ -1759,7 +1759,7 @@ func TestHermesBridge_ToolLoop_WriteOutsideWorkingFileIsFlagged(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runHermesJobFile(t, b, "Complète mon cours", "desk", deskModeDirect, "B1/unite1.md")
 
 	assertNoErrorEvent(t, events)
@@ -1792,7 +1792,7 @@ func TestHermesBridge_ToolLoop_WriteWithNoWorkingFileIsFlagged(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runHermesJobSub(t, b, "Crée un cours", "desk", deskModeDirect)
 
 	assertNoErrorEvent(t, events)
@@ -1820,7 +1820,7 @@ func TestHermesBridge_ToolLoop_WriteOnWorkingFileIsNotFlagged(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runHermesJobFile(t, b, "Complète mon cours", "desk", deskModeDirect, "B1/unite1.md")
 
 	assertNoErrorEvent(t, events)
@@ -1846,7 +1846,7 @@ func TestHermesBridge_ToolLoop_UnknownToolName(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Supprime a.md")
 
 	assertNoErrorEvent(t, events)
@@ -1874,7 +1874,7 @@ func TestHermesBridge_ToolLoop_MalformedArguments(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Écris a.md")
 
 	assertNoErrorEvent(t, events)
@@ -1915,7 +1915,7 @@ func TestHermesBridge_ToolLoop_IncompleteCallDroppedOnStop(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Écris a.md")
 
 	assertNoErrorEvent(t, events)
@@ -1959,7 +1959,7 @@ func TestHermesBridge_ToolLoop_DroppedCallStillCountsAsSupported(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	logged := captureLog(t, func() {
 		runDeskDirectJob(t, b, "Écris a.md")
 	})
@@ -2034,7 +2034,7 @@ func TestHermesBridge_ToolLoop_TwoCallsInOneTurn(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Lis a.md puis écris b.md")
 
 	assertNoErrorEvent(t, events)
@@ -2076,7 +2076,7 @@ func TestHermesBridge_ToolLoop_MissingCallID(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Lis a.md")
 
 	assertNoErrorEvent(t, events)
@@ -2104,7 +2104,7 @@ func TestHermesBridge_ToolLoop_ChunkErrorAfterWrite(t *testing.T) {
 	}, false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Écris a.md")
 
 	var sawError bool
@@ -2138,7 +2138,7 @@ func TestHermesBridge_ToolLoop_LoopCapMentionsWrites(t *testing.T) {
 	}, true)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	events := runDeskDirectJob(t, b, "Boucle d'écriture")
 
 	assertNoErrorEvent(t, events)
@@ -2165,7 +2165,7 @@ func runMirrorWrite(t *testing.T, tmpDir, reportedPath, content, mode string) ([
 	hermes := mockHermesFileWriteServer("write_file", reportedPath, content, "done")
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	var events []StreamEvent
 	logged := captureLog(t, func() {
 		events = runHermesJob(t, b, "Ajoute une analyse de la politique us", mode)
@@ -2465,7 +2465,7 @@ func runFrameJob(t *testing.T, tmpDir, eventName, mode string, payload map[strin
 	hermes := mockHermesEventServer(eventName, payload)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	var events []StreamEvent
 	logged := captureLog(t, func() {
 		events = runHermesJob(t, b, "Ajoute une ligne dans Test_folders/test_nvx_cours.md", mode)
@@ -2661,7 +2661,7 @@ func TestHermesBridge_ResponsesAPI_MirrorsWrite(t *testing.T) {
 	hermes := mockHermesResponsesServer("/opt/data/Test_folders/test_nvx_cours.md", "# Test\n\nLigne ajoutée.", true)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	logged := captureLog(t, func() {
 		runHermesJob(t, b, "Ajoute une ligne dans Test_folders/test_nvx_cours.md", "desk")
 	})
@@ -2696,7 +2696,7 @@ func TestHermesBridge_ResponsesAPI_RejectsFramelessWrite(t *testing.T) {
 	hermes := mockHermesResponsesServer("", "contenu sans chemin", false)
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, nil)
 	logged := captureLog(t, func() {
 		runHermesJob(t, b, "Écris un fichier", "desk")
 	})
@@ -2714,7 +2714,7 @@ func TestHermesBridge_Summary_NoToolFrameAtAll(t *testing.T) {
 	hermes := mockHermesServer() // three text deltas, then [DONE]
 	defer hermes.Close()
 
-	b := NewHermesBridge(hermes.URL, "test-key", t.TempDir())
+	b := NewHermesBridge(hermes.URL, "test-key", t.TempDir(), nil)
 	logged := captureLog(t, func() {
 		runHermesJob(t, b, "Ajoute une ligne dans Test_folders/test_nvx_cours.md", "desk")
 	})
@@ -2734,7 +2734,7 @@ func TestHermesBridge_Summary_NoToolFrameAtAll(t *testing.T) {
 func TestHermesBridge_Summary_RejectedFrameDiffersFromNoFrame(t *testing.T) {
 	noFrame := mockHermesServer()
 	defer noFrame.Close()
-	bNoFrame := NewHermesBridge(noFrame.URL, "test-key", t.TempDir())
+	bNoFrame := NewHermesBridge(noFrame.URL, "test-key", t.TempDir(), nil)
 	noFrameLog := captureLog(t, func() {
 		runHermesJob(t, bNoFrame, "Ajoute une ligne", "desk")
 	})
@@ -3002,4 +3002,277 @@ func TestHermesBridge_Trace_MirroredWriteStillWorks(t *testing.T) {
 	if !strings.Contains(logged, "mirroredWrites=1 skippedWrites=0 sseEventFrames=1 sseEventNames=[hermes.tool.progress] toolProgressFrames=1") {
 		t.Errorf("expected the summary to report the mirrored frame, got:\n%s", logged)
 	}
+}
+
+// --- web_search (Brave) ------------------------------------------------------
+
+// mockBrave serves one canned Brave answer and counts the calls, so a test can
+// prove the search ran exactly once rather than per turn.
+type mockBrave struct {
+	*httptest.Server
+	mu      sync.Mutex
+	calls   int
+	queries []string
+	status  int
+}
+
+func newMockBrave(status int) *mockBrave {
+	m := &mockBrave{status: status}
+	m.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		m.calls++
+		m.queries = append(m.queries, r.URL.Query().Get("q"))
+		status := m.status
+		m.mu.Unlock()
+
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
+		}
+		var resp braveResponse
+		resp.Web.Results = []braveWebResult{{
+			Title:       "Present perfect exercises",
+			URL:         "https://example.com/present-perfect",
+			Description: "Exercices gradués sur le present perfect.",
+		}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	return m
+}
+
+func (m *mockBrave) callCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.calls
+}
+
+func (m *mockBrave) client() *BraveSearch {
+	return &BraveSearch{apiKey: "brave-test-key", timeout: 5 * time.Second, endpoint: m.URL}
+}
+
+// searchCall is the scripted tool call a model makes to search the web.
+func searchCall(id, query string) scriptedToolCall {
+	args, _ := json.Marshal(map[string]string{"query": query})
+	return scriptedToolCall{id: id, name: "web_search", arguments: string(args)}
+}
+
+// web_search is read-only, so unlike the file tools it is offered in EVERY mode:
+// a teacher asking a question in mode Lya has as much use for a fact-check as one
+// editing a file in Desk.
+func TestHermesBridge_WebSearch_DeclaredInEveryMode(t *testing.T) {
+	cases := []struct {
+		name          string
+		mode          string
+		deskMode      string
+		wantFileTools bool
+	}{
+		{"desk direct", "desk", deskModeDirect, true},
+		{"desk insert", "desk", deskModeInsert, false},
+		{"desk legacy", "desk", "", false},
+		{"lya", "lya", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			brave := newMockBrave(http.StatusOK)
+			defer brave.Close()
+			hermes := newScriptedHermes([]scriptedTurn{{text: "Réponse."}}, false)
+			defer hermes.Close()
+
+			b := NewHermesBridge(hermes.URL, "test-key", t.TempDir(), brave.client())
+			events := runHermesJobSub(t, b, "une question", tc.mode, tc.deskMode)
+			assertNoErrorEvent(t, events)
+
+			declared := declaredToolNames(t, hermes.request(t, 0))
+			if !slicesContains(declared, "web_search") {
+				t.Errorf("web_search must be declared in mode %s/%s, got %v", tc.mode, tc.deskMode, declared)
+			}
+			hasFileTools := slicesContains(declared, "write_file")
+			if hasFileTools != tc.wantFileTools {
+				t.Errorf("file tools declared = %t, want %t (mode %s/%s): %v",
+					hasFileTools, tc.wantFileTools, tc.mode, tc.deskMode, declared)
+			}
+		})
+	}
+}
+
+// No key, no tool: declaring web_search without a client would have the model
+// call a tool that can only answer "indisponible".
+func TestHermesBridge_WebSearch_NotDeclaredWithoutKey(t *testing.T) {
+	hermes := newScriptedHermes([]scriptedTurn{{text: "Réponse."}}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", t.TempDir(), nil)
+	assertNoErrorEvent(t, runHermesJobSub(t, b, "une question", "lya", ""))
+
+	req := hermes.request(t, 0)
+	if _, ok := req["tools"]; ok {
+		t.Errorf("no tool must be declared in mode Lya without a Brave key, got %v", declaredToolNames(t, req))
+	}
+}
+
+// The whole point: the search result must come back in the tool message of the
+// NEXT request, which is the only way the model can use it.
+func TestHermesBridge_WebSearch_ResultReachesTheModel(t *testing.T) {
+	brave := newMockBrave(http.StatusOK)
+	defer brave.Close()
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{searchCall("call_1", "present perfect exercises")}},
+		{text: "Voici des exercices."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", t.TempDir(), brave.client())
+	events := runDeskDirectJob(t, b, "trouve des exercices")
+	assertNoErrorEvent(t, events)
+
+	if got := brave.callCount(); got != 1 {
+		t.Errorf("expected exactly 1 Brave call, got %d", got)
+	}
+	if q := brave.queries[0]; q != "present perfect exercises" {
+		t.Errorf("query sent to Brave = %q", q)
+	}
+
+	results := toolResultContents(t, hermes.request(t, 1))
+	if len(results) != 1 {
+		t.Fatalf("expected 1 tool result fed back, got %d", len(results))
+	}
+	for _, want := range []string{"Present perfect exercises", "https://example.com/present-perfect"} {
+		if !strings.Contains(results[0], want) {
+			t.Errorf("expected the tool result to contain %q, got:\n%s", want, results[0])
+		}
+	}
+
+	// The teacher sees the search happen, like any other tool: running then done.
+	names := toolEventNames(events)
+	for _, want := range []string{"web_search:running", "web_search:done"} {
+		if !slicesContains(names, want) {
+			t.Errorf("expected a %q tool event in the thread, got %v", want, names)
+		}
+	}
+	// A search changes no file, so no editor reload must be triggered.
+	if slicesContains(names, "file_changed") {
+		t.Errorf("web_search must not emit file_changed, got %v", names)
+	}
+
+	// The query travels in the event, under "query" and NOT under "path": the UI
+	// labels the search with its terms, and Chat.tsx keys the editor reload off
+	// path — a query there would make a search look like a file operation.
+	var sawQuery bool
+	for _, ev := range events {
+		if ev.Type != "tool" {
+			continue
+		}
+		m, ok := ev.Tool.(map[string]interface{})
+		if !ok || m["name"] != "web_search" {
+			continue
+		}
+		if m["query"] == "present perfect exercises" {
+			sawQuery = true
+		}
+		if p, _ := m["path"].(string); p != "" {
+			t.Errorf("web_search event must carry no path, got %q", p)
+		}
+	}
+	if !sawQuery {
+		t.Error("no web_search event carried the query the model asked for")
+	}
+}
+
+// In mode Lya the file tools are not declared. A model that asks for one anyway
+// must still be refused — while web_search, which IS declared, goes through.
+func TestHermesBridge_WebSearch_AllowedInLyaModeButWriteStillRefused(t *testing.T) {
+	brave := newMockBrave(http.StatusOK)
+	defer brave.Close()
+	tmpDir := t.TempDir()
+
+	writeArgs, _ := json.Marshal(map[string]string{"path": "interdit.md", "content": "x"})
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{
+			searchCall("call_1", "irregular verbs"),
+			{id: "call_2", name: "write_file", arguments: string(writeArgs)},
+		}},
+		{text: "Voici ce que j'ai trouvé."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir, brave.client())
+	events := runHermesJobSub(t, b, "cherche puis écris", "lya", "")
+	assertNoErrorEvent(t, events)
+
+	if brave.callCount() != 1 {
+		t.Errorf("expected the search to run in mode Lya, Brave calls = %d", brave.callCount())
+	}
+	// The refused write must not have touched the workspace.
+	if _, err := os.Stat(filepath.Join(tmpDir, "interdit.md")); !os.IsNotExist(err) {
+		t.Error("write_file was executed in mode Lya: the file exists")
+	}
+	// Exactly one tool result: the search. The write was dropped, not answered.
+	results := toolResultContents(t, hermes.request(t, 1))
+	if len(results) != 1 {
+		t.Fatalf("expected only the search result to be fed back, got %d: %v", len(results), results)
+	}
+	if !strings.Contains(results[0], "Present perfect exercises") {
+		t.Errorf("the surviving tool result is not the search result: %s", results[0])
+	}
+}
+
+// A Brave outage is a tool result, never a job error: the teacher must still get
+// an answer, and the model must be told to fall back to what it knows.
+func TestHermesBridge_WebSearch_BraveFailureIsNotAJobError(t *testing.T) {
+	brave := newMockBrave(http.StatusTooManyRequests)
+	defer brave.Close()
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{searchCall("call_1", "quota")}},
+		{text: "Je n'ai pas pu chercher, voici ce que je sais."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", t.TempDir(), brave.client())
+	events := runDeskDirectJob(t, b, "cherche")
+	assertNoErrorEvent(t, events)
+
+	if lastType(events) != "done" {
+		t.Errorf("a Brave failure must not end the job in error, last event = %s", lastType(events))
+	}
+	results := toolResultContents(t, hermes.request(t, 1))
+	if len(results) != 1 {
+		t.Fatalf("expected the failure to be fed back as a tool result, got %d", len(results))
+	}
+	if !strings.Contains(results[0], "Cherche par toi-même") {
+		t.Errorf("expected the fallback instruction in the tool result, got:\n%s", results[0])
+	}
+}
+
+// A tool call with no query is a model error, and it must come back as a tool
+// error the model can correct — not as a Brave request with an empty q.
+func TestHermesBridge_WebSearch_MissingQueryIsAToolError(t *testing.T) {
+	brave := newMockBrave(http.StatusOK)
+	defer brave.Close()
+	hermes := newScriptedHermes([]scriptedTurn{
+		{toolCalls: []scriptedToolCall{{id: "call_1", name: "web_search", arguments: `{"q":"mauvaise clé"}`}}},
+		{text: "Corrigé."},
+	}, false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", t.TempDir(), brave.client())
+	events := runDeskDirectJob(t, b, "cherche")
+	assertNoErrorEvent(t, events)
+
+	if brave.callCount() != 0 {
+		t.Errorf("no Brave call must be made without a query, got %d", brave.callCount())
+	}
+	results := toolResultContents(t, hermes.request(t, 1))
+	if len(results) != 1 || !strings.Contains(results[0], "query") {
+		t.Errorf("expected a tool error naming the missing parameter, got %v", results)
+	}
+}
+
+func slicesContains(haystack []string, needle string) bool {
+	for _, v := range haystack {
+		if v == needle {
+			return true
+		}
+	}
+	return false
 }

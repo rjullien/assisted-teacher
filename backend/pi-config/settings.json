@@ -2,7 +2,7 @@
   "defaultProvider": "bifrost",
   "defaultModel": "bifrost-default",
   "defaultProjectTrust": "never",
-  "defaultTools": ["read", "edit", "write", "grep", "find", "ls"],
+  "defaultTools": ["read", "edit", "write", "grep", "find", "ls", "bash"],
   "quietStartup": true,
   "enableInstallTelemetry": false,
   "compaction": {
