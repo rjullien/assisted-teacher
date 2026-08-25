@@ -1,0 +1,9 @@
+{
+  "name": "pi-extension-brave-search",
+  "private": true,
+  "type": "module",
+  "description": "Outil web_search pour pi, via l'API Brave Search. typebox est fourni par pi au runtime ; il n'est listé ici que pour rendre le fichier de test exécutable en CI.",
+  "devDependencies": {
+    "typebox": "^1.3.19"
+  }
+}

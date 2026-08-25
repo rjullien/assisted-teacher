@@ -241,11 +241,12 @@ describe('web_search', () => {
     )
     expect(isSearchOp(normalizeTool({ name: 'web_search' }))).toBe(false)
     expect(isSearchOp(normalizeTool({ name: 'read_file', path: 'a.md' }))).toBe(false)
-    // pi searches through bash, which is indistinguishable from any other
-    // command it runs, so it must not be labelled as a search. Asserted with a
-    // payload that WOULD qualify on every other count — a bare
-    // {name:'bash'} passes even when bash is wrongly in the set, so it proves
-    // nothing.
+    // pi now searches through its own `web_search` extension tool, so all three
+    // modes surface the same name. `bash` must still never read as a search: it
+    // is not in pi's allowlist at all, and if it ever came back it should appear
+    // as a generic tool rather than be mislabelled. Asserted with a payload that
+    // WOULD qualify on every other count — a bare {name:'bash'} passes even when
+    // bash is wrongly in the set, so it proves nothing.
     expect(isSearchOp(normalizeTool({ name: 'bash', status: 'error', error: 'boom' }))).toBe(false)
     expect(isSearchOp(normalizeTool({ name: 'bash', status: 'done', query: 'curl …' }))).toBe(false)
   })

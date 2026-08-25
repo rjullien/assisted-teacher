@@ -208,9 +208,9 @@ func TestBraveSearch_CapsResults(t *testing.T) {
 // --- Integration: exactly ONE real Brave call, and only when a key is present ---
 
 func TestBraveSearch_RealAPI(t *testing.T) {
-	key := os.Getenv("BRAVE_API_KEY")
+	key := os.Getenv("BRAVE_SEARCH_API_KEY")
 	if key == "" {
-		t.Skip("BRAVE_API_KEY not set — skipping the single real Brave call")
+		t.Skip("BRAVE_SEARCH_API_KEY not set — skipping the single real Brave call")
 	}
 	b := NewBraveSearch(key)
 	if b == nil {

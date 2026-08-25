@@ -54,6 +54,30 @@ jobs:
         working-directory: frontend
         run: npx vitest --run
 
+  test-pi-extensions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: backend/pi-config/extensions/brave-search/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend/pi-config/extensions/brave-search
+        run: npm ci
+
+      # Node 22 exécute le TypeScript par effacement de types, donc aucune étape
+      # de compilation. Aucun appel réseau et aucune clé Brave : les tests
+      # remplacent globalThis.fetch.
+      - name: Run pi extension tests
+        working-directory: backend/pi-config/extensions/brave-search
+        run: node --experimental-strip-types --test index.test.ts
+
   build-backend:
     needs: [test-backend]
     runs-on: ubuntu-latest

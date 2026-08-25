@@ -25,36 +25,44 @@ import (
 
 // piAllowedTools is the allowlist passed to `pi --tools`.
 //
-// `bash` is INCLUDED, reversing the v1.8.0 decision. It is the only way pi can
-// search the web: pi has no built-in web_search tool and no custom-tool API
-// (earendil-works/pi#190 is a proposal, not a release), so the official
-// brave-search skill works the only way a skill can — `curl` from a shell.
-// Without bash, pi cannot search at all, while Lya can.
+// `bash` stays OUT, and the v1.8.0 decision stands. Web search comes from
+// `web_search`, a custom tool registered by the pi extension in
+// pi-config/extensions/brave-search. It calls the Brave API from inside pi's own
+// process, so the model never gets a shell.
 //
-// What this costs, stated plainly rather than left implicit: a shell defeats
-// every path boundary in this file. cmd.Dir and safePath() bound the FILE TOOLS,
-// not a subprocess, so with bash the workspace jail is advisory. What still
-// holds: the container filesystem is the blast radius (no host mount beyond the
-// workspace PVC), --no-approve and defaultProjectTrust: never keep a teacher-
-// uploaded .pi/ from being honoured, and --no-context-files keeps a teacher-
-// uploaded AGENTS.md out of the prompt.
+// pi DOES have a custom-tool API: `pi.registerTool()`, documented in
+// packages/coding-agent/docs/extensions.md and shipping in 0.84.2. An earlier
+// revision of this file claimed otherwise (citing earendil-works/pi#190 as an
+// unreleased proposal) and paid for it by re-enabling bash. Measured on the real
+// image at 0.84.2, the tool list pi declares to the model is:
 //
-// This list is now the COMPLETE set of pi's built-in tools, verified against
-// `pi --help` on 0.84.2: read, bash, edit, write, grep, find, ls. There is no
-// `powershell` tool in pi — the previous comment named it as if excluding it
-// meant something, and the test asserted its absence, which could never fail.
+//	edit, find, grep, ls, read, web_search, write
+//
+// — web_search present, bash absent. TestPi_ToolAllowlistIsExact pins it.
+//
+// Why this matters beyond tidiness: cmd.Dir and safePath() bound the FILE TOOLS,
+// not a subprocess. A shell would make the workspace jail advisory. Keeping bash
+// out is what keeps it enforced.
+//
+// `web_search` MUST be listed here. --tools is a strict allowlist over ALL
+// tools, extension tools included: measured on 0.84.2, omitting web_search from
+// this list silently drops it from the tools declared to the model, even though
+// the extension loaded fine.
+//
+// The built-ins are read, bash, edit, write, grep, find, ls, verified against
+// `pi --help` on 0.84.2. There is no `powershell` tool in pi.
 //
 // Note that --tools is NOT validated by pi: `--tools read,jenexistepas` is
 // accepted silently (measured). So a typo here silently drops a tool instead of
 // failing at boot, which is why TestPi_ToolAllowlistIsExact pins the string.
-var piAllowedTools = []string{"read", "edit", "write", "grep", "find", "ls", "bash"}
+var piAllowedTools = []string{"read", "edit", "write", "grep", "find", "ls", "web_search"}
 
 type PiBridge struct {
 	piCmd    string       // path to pi binary
 	workDir  string       // workspace directory (jail root)
 	provider string       // provider key declared in ~/.pi/agent/models.json
 	model    string       // model *name* to match (not its id — see runPi)
-	brave    *BraveSearch // Brave Search client, nil if BRAVE_API_KEY unset
+	brave    *BraveSearch // Brave Search client, nil if BRAVE_SEARCH_API_KEY unset
 	hub      *Hub
 	upgrader websocket.Upgrader
 
@@ -227,14 +235,15 @@ func (b *PiBridge) startJob(content, systemPrompt, currentFile, mode string) *Jo
 	return job
 }
 
-// piWebSearchHint tells pi that web search exists and how to reach it.
+// piWebSearchHint tells pi that web search exists and when to reach for it.
 //
-// Necessary because a skill is loaded ON DEMAND: pi sees the skill list, but
-// nothing in a one-shot prompt makes it consider searching unless the capability
-// is named. The fallback sentence matters as much as the capability — a failed
-// curl must not end the turn with "je ne peux pas chercher".
-const piWebSearchHint = "Tu peux chercher sur le web avec la compétence /skill:web-search " +
-	"(API Brave Search, clé déjà dans BRAVE_SEARCH_API_KEY). Utilise-la pour " +
+// The tool is already declared in the tool list, so this is not about
+// discoverability but about disposition: in a one-shot prompt with no
+// conversation history, nothing makes the model consider searching rather than
+// answering from memory. The fallback sentence matters as much as the capability
+// — a failed search must not end the turn with "je ne peux pas chercher".
+const piWebSearchHint = "Tu peux chercher sur le web avec l'outil web_search " +
+	"(API Brave Search, déjà configuré). Utilise-le pour " +
 	"vérifier un fait, trouver un document authentique ou une référence récente. " +
 	"Si la recherche échoue, dis-le et continue avec ce que tu sais."
 
@@ -245,9 +254,9 @@ const piWebSearchHint = "Tu peux chercher sur le web avec la compétence /skill:
 // pi is given no conversation history — each request is one turn — so anything
 // that must be known has to be in here.
 //
-// webSearch is false when BRAVE_API_KEY is unset: announcing a capability that
-// is not configured would make pi run a curl with an empty header and report a
-// Brave error to the teacher instead of answering.
+// webSearch is false when BRAVE_SEARCH_API_KEY is unset: announcing a capability
+// that is not configured would make pi call web_search and report a Brave error
+// to the teacher instead of answering.
 func buildPiPrompt(systemPrompt, currentFile, content string, webSearch bool) string {
 	var b strings.Builder
 	if systemPrompt != "" {
@@ -322,19 +331,16 @@ func (b *PiBridge) runPi(ctx context.Context, job *Job, content, systemPrompt, c
 	// check, install telemetry). Inside the cluster those either hang or fail,
 	// and none of them are wanted here.
 	cmd.Env = append(cmd.Environ(), "PI_OFFLINE=1", "PI_SKIP_VERSION_CHECK=1")
-	// The web-search skill reads BRAVE_SEARCH_API_KEY — that is the name in the
-	// official skill's curl invocation, verified against
-	// brave/brave-search-skills/skills/web-search/SKILL.md. BRAVE_API_KEY is
-	// exported under its own name too, because that is what this repo and the
-	// Kubernetes secret call it and a skill copied from elsewhere may use it.
-	// Both carry the TRIMMED key (see NewBraveSearch): the skill interpolates it
-	// straight into a header, where a trailing newline would break the request
-	// with a misleading "invalid key" from Brave.
+	// One name, BRAVE_SEARCH_API_KEY, everywhere: it is the name the third-party
+	// nousresearch/hermes-agent image imposes on the Hermès pods, and that image
+	// is not ours to change. Everything we do own reads that name, so a single
+	// Infisical entry feeds the whole cluster and `grep -r` finds the full chain.
+	//
+	// Passed explicitly even though the extension would inherit it from the
+	// environment, because this value is TRIMMED (see NewBraveSearch) while the
+	// raw pod env is not.
 	if b.brave != nil {
-		cmd.Env = append(cmd.Env,
-			"BRAVE_SEARCH_API_KEY="+b.brave.apiKey,
-			"BRAVE_API_KEY="+b.brave.apiKey,
-		)
+		cmd.Env = append(cmd.Env, "BRAVE_SEARCH_API_KEY="+b.brave.apiKey)
 	}
 	cmd.Env = append(cmd.Env, b.testEnv...)
 
