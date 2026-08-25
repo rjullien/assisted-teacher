@@ -2,7 +2,14 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { AuthWebSocket, handleAuthExpired } from '../api'
 import { useI18n } from '../i18n'
-import { normalizeTool, isFileOp, isToolRunning, toolLabel, WRITE_TOOL_NAMES } from '../tools'
+import {
+  normalizeTool,
+  isFileOp,
+  isSearchOp,
+  isToolRunning,
+  toolLabel,
+  WRITE_TOOL_NAMES,
+} from '../tools'
 
 interface ChatMessage {
   id: string
@@ -459,7 +466,22 @@ export default function Chat({
         // that had not happened yet: every operation appeared twice, and a refused
         // write was preceded by a line claiming it had landed. In progress belongs
         // to the transient status line.
-        if (isFileOp(tool) && isToolRunning(tool)) {
+        // A web search is an audit trail for the same reason a file read is: the
+        // teacher has to be able to see that an assertion came from the web, and
+        // with which terms. It changes no file, so jobWroteFiles is untouched.
+        if (isSearchOp(tool) && isToolRunning(tool)) {
+          setToolStatus(toolLabel(tool, t))
+        } else if (isSearchOp(tool)) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `tool-${Date.now()}-${Math.random()}`,
+              role: 'tool',
+              content: toolLabel(tool, t),
+            },
+          ])
+          setToolStatus('')
+        } else if (isFileOp(tool) && isToolRunning(tool)) {
           setToolStatus(toolLabel(tool, t))
         } else if (isFileOp(tool)) {
           // The backend flags a write landing outside the working file named at

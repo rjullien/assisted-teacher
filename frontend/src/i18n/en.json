@@ -118,6 +118,8 @@
     "toolWrite": "✏️ Writing {path}",
     "toolReading": "📄 Reading {path}…",
     "toolWriting": "✏️ Writing {path}…",
+    "toolSearching": "🔍 Web search: {query}…",
+    "toolSearched": "🔍 Web search: {query}",
     "toolOther": "🔧 {name}",
     "toolUnknown": "🔧 working…",
     "toolFailed": "⚠️ Failed on {path}: {error}",

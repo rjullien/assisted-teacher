@@ -26,6 +26,11 @@ import (
 const fakePiEnv = "GO_FAKE_PI_SCENARIO"
 const fakePiArgsEnv = "GO_FAKE_PI_ARGV_OUT"
 
+// fakePiEnvOut makes the fake pi dump its own environment to a file, so a test
+// can assert what the SUBPROCESS really received. Asserting on the bridge's
+// intent instead would not catch the key being dropped between the two.
+const fakePiEnvOut = "GO_FAKE_PI_ENV_OUT"
+
 // TestFakePiHelper is not a test. It is the fake pi binary, selected by the
 // environment variable so `go test` can re-exec itself.
 func TestFakePiHelper(t *testing.T) {
@@ -37,6 +42,10 @@ func TestFakePiHelper(t *testing.T) {
 	// Record argv so a test can assert on the flags the bridge passes.
 	if out := os.Getenv(fakePiArgsEnv); out != "" {
 		_ = os.WriteFile(out, []byte(strings.Join(os.Args, "\n")), 0o600)
+	}
+	// Record the environment for the same reason.
+	if out := os.Getenv(fakePiEnvOut); out != "" {
+		_ = os.WriteFile(out, []byte(strings.Join(os.Environ(), "\n")), 0o600)
 	}
 
 	switch scenario {
@@ -89,9 +98,20 @@ func newFakePiBridge(t *testing.T, scenario string, extraEnv ...string) *PiBridg
 	if err != nil {
 		t.Fatalf("os.Executable: %v", err)
 	}
-	b := NewPiBridge(exe, t.TempDir(), "bifrost", "bifrost-default")
+	b := NewPiBridge(exe, t.TempDir(), "bifrost", "bifrost-default", nil)
 	b.testArgs = []string{"-test.run=TestFakePiHelper"}
 	b.testEnv = append([]string{fakePiEnv + "=" + scenario}, extraEnv...)
+	return b
+}
+
+// newFakePiBridgeWithBrave is newFakePiBridge with web search configured.
+func newFakePiBridgeWithBrave(t *testing.T, scenario, key string, extraEnv ...string) *PiBridge {
+	t.Helper()
+	b := newFakePiBridge(t, scenario, extraEnv...)
+	b.brave = NewBraveSearch(key)
+	if b.brave == nil {
+		t.Fatalf("NewBraveSearch(%q) returned nil", key)
+	}
 	return b
 }
 
@@ -296,31 +316,34 @@ func TestPi_IgnoresUnparseableLines(t *testing.T) {
 	}
 }
 
-// Safety: bash must never be offered to an agent driven by a teacher from a
-// browser. This asserts the actual argv, not the intention.
-func TestPi_ToolAllowlistExcludesShells(t *testing.T) {
-	argvFile := t.TempDir() + "/argv"
-	b := newFakePiBridge(t, "happy", fakePiArgsEnv+"="+argvFile)
+// piArgvFromRun returns the argv the bridge really passed to the subprocess.
+func piArgvFromRun(t *testing.T, b *PiBridge, argvFile string) []string {
+	t.Helper()
 	runScenario(t, b)
-
 	raw, err := os.ReadFile(argvFile)
 	if err != nil {
 		t.Fatalf("fake pi did not record argv: %v", err)
 	}
-	argv := strings.Split(string(raw), "\n")
+	return strings.Split(string(raw), "\n")
+}
+
+// The tool list is an explicit allowlist and nothing is implicit about it: this
+// asserts the actual argv element by element.
+//
+// bash is now EXPECTED — it is what makes the web-search skill possible (see
+// piAllowedTools). The test pins the whole set so that adding a tool is a
+// deliberate act with a failing test to update, not a silent widening.
+func TestPi_ToolAllowlistIsExact(t *testing.T) {
+	argvFile := t.TempDir() + "/argv"
+	argv := piArgvFromRun(t, newFakePiBridge(t, "happy", fakePiArgsEnv+"="+argvFile), argvFile)
 	joined := strings.Join(argv, " ")
 
-	for _, forbidden := range []string{"bash", "powershell"} {
-		if strings.Contains(joined, forbidden) {
-			t.Errorf("%q reached pi's tool list: %s", forbidden, joined)
-		}
-	}
 	for _, required := range []string{"--mode", "rpc", "--no-session", "--tools", "--no-approve", "--no-context-files"} {
 		if !strings.Contains(joined, required) {
 			t.Errorf("missing required argument %q in %s", required, joined)
 		}
 	}
-	// The allowlist itself, verified element by element.
+
 	var toolsArg string
 	for i, a := range argv {
 		if a == "--tools" && i+1 < len(argv) {
@@ -330,9 +353,112 @@ func TestPi_ToolAllowlistExcludesShells(t *testing.T) {
 	if toolsArg == "" {
 		t.Fatal("--tools had no value")
 	}
-	got := strings.Split(toolsArg, ",")
-	if len(got) != len(piAllowedTools) {
-		t.Errorf("--tools = %v, want exactly %v", got, piAllowedTools)
+	if toolsArg != strings.Join(piAllowedTools, ",") {
+		t.Fatalf("--tools = %q, want %q", toolsArg, strings.Join(piAllowedTools, ","))
+	}
+
+	got := map[string]bool{}
+	for _, tool := range strings.Split(toolsArg, ",") {
+		got[tool] = true
+	}
+	// bash is required: without it pi cannot run the web-search skill's curl.
+	if !got["bash"] {
+		t.Error("bash is absent from --tools: the web-search skill cannot run without a shell")
+	}
+	for _, required := range []string{"read", "edit", "write", "grep", "find", "ls"} {
+		if !got[required] {
+			t.Errorf("file tool %q is missing from --tools", required)
+		}
+	}
+	// Only names pi actually has. `pi --help` on 0.84.2 lists exactly seven
+	// built-in tools, and --tools is not validated: a name outside this set is
+	// accepted silently and enables nothing, so a typo would be invisible.
+	builtin := map[string]bool{
+		"read": true, "bash": true, "edit": true,
+		"write": true, "grep": true, "find": true, "ls": true,
+	}
+	for tool := range got {
+		if !builtin[tool] {
+			t.Errorf("%q is not one of pi's built-in tools — --tools is not validated, so it would silently enable nothing", tool)
+		}
+	}
+}
+
+// The skill interpolates the key straight into a curl header. The name matters:
+// BRAVE_SEARCH_API_KEY is what the official skill reads.
+func TestPi_PassesBraveKeyToSubprocess(t *testing.T) {
+	envFile := t.TempDir() + "/env"
+	b := newFakePiBridgeWithBrave(t, "happy", "  brave-secret\n", fakePiEnvOut+"="+envFile)
+	runScenario(t, b)
+
+	raw, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("fake pi did not record its environment: %v", err)
+	}
+	env := map[string]string{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			env[k] = v
+		}
+	}
+
+	for _, name := range []string{"BRAVE_SEARCH_API_KEY", "BRAVE_API_KEY"} {
+		v, ok := env[name]
+		if !ok {
+			t.Fatalf("%s was not exported to the pi subprocess", name)
+		}
+		// Trimmed: an Infisical secret carries a trailing newline, and a newline
+		// inside an HTTP header makes Brave answer "invalid key" — a misleading
+		// error that costs a debugging cycle.
+		if v != "brave-secret" {
+			t.Errorf("%s = %q, want the trimmed key %q", name, v, "brave-secret")
+		}
+	}
+}
+
+// Without a key, nothing Brave-related reaches the subprocess: a skill invoked
+// with an empty header answers 401 in the middle of a lesson.
+func TestPi_NoBraveKeyNoBraveEnv(t *testing.T) {
+	envFile := t.TempDir() + "/env"
+	b := newFakePiBridge(t, "happy", fakePiEnvOut+"="+envFile)
+	runScenario(t, b)
+
+	raw, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("fake pi did not record its environment: %v", err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, "BRAVE_SEARCH_API_KEY=") || strings.HasPrefix(line, "BRAVE_API_KEY=") {
+			t.Fatalf("a Brave variable reached the subprocess with no key configured: %q", line)
+		}
+	}
+}
+
+// The capability has to be NAMED in the prompt: pi gets no conversation history,
+// and an unmentioned skill is a skill it never considers using.
+func TestPi_PromptAnnouncesWebSearchOnlyWhenConfigured(t *testing.T) {
+	with := buildPiPrompt("systeme", "B1/unit5.md", "ajoute un exercice", true)
+	if !strings.Contains(with, "/skill:web-search") {
+		t.Errorf("expected the prompt to name the web-search skill, got:\n%s", with)
+	}
+	if !strings.Contains(with, "BRAVE_SEARCH_API_KEY") {
+		t.Errorf("expected the prompt to name the key variable, got:\n%s", with)
+	}
+
+	without := buildPiPrompt("systeme", "B1/unit5.md", "ajoute un exercice", false)
+	if strings.Contains(without, "web-search") {
+		t.Errorf("web search must not be announced without a key, got:\n%s", without)
+	}
+
+	// The teacher's own text stays last in both cases: the hint must not push it
+	// away from the end of the prompt.
+	for name, prompt := range map[string]string{"with": with, "without": without} {
+		if !strings.HasSuffix(strings.TrimSpace(prompt), "ajoute un exercice") {
+			t.Errorf("%s: the teacher's text must end the prompt, got:\n%s", name, prompt)
+		}
+		if !strings.Contains(prompt, "B1/unit5.md") {
+			t.Errorf("%s: the open file was dropped from the prompt", name)
+		}
 	}
 }
 
@@ -371,7 +497,7 @@ func TestPi_PromptCarriesSystemAndFileContext(t *testing.T) {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	}
-	built := buildPiPrompt("prompt systeme", "B1/unit5.md", "bonjour")
+	built := buildPiPrompt("prompt systeme", "B1/unit5.md", "bonjour", false)
 	if err := json.Unmarshal([]byte(fmt.Sprintf(`{"type":"prompt","message":%q}`, built)), &msg); err != nil {
 		t.Fatalf("prompt is not JSON-safe: %v", err)
 	}
@@ -385,7 +511,7 @@ func TestPi_PromptCarriesSystemAndFileContext(t *testing.T) {
 		t.Errorf("user text should come last, got %q", msg.Message)
 	}
 
-	bare := buildPiPrompt("", "", "bonjour")
+	bare := buildPiPrompt("", "", "bonjour", false)
 	if bare != "bonjour" {
 		t.Errorf("with no system and no file the prompt should be the user text alone, got %q", bare)
 	}

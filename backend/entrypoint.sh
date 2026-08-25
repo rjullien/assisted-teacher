@@ -44,6 +44,24 @@ if [ "$PI_ENABLED" = "true" ]; then
 
   cp /data/pi-config/settings.json "$PI_AGENT_DIR/settings.json"
 
+  # Skills live in $HOME/.pi/agent/skills/<name>/SKILL.md and are loaded on
+  # demand. web-search is the only way pi can reach the web: it has no built-in
+  # web_search tool, so the skill shells out to curl.
+  if [ -d /data/pi-config/skills ]; then
+    mkdir -p "$PI_AGENT_DIR/skills"
+    cp -R /data/pi-config/skills/. "$PI_AGENT_DIR/skills/"
+    echo "pi: skills installed: $(ls "$PI_AGENT_DIR/skills" | tr '\n' ' ')"
+  fi
+
+  # Announce whether web search can actually work, at boot rather than on the
+  # teacher's first question. A skill present with no key produces a 401 from
+  # Brave in the middle of an answer, which reads like a product bug.
+  if [ -n "$(printf '%s' "${BRAVE_API_KEY:-}" | tr -d '[:space:]')" ]; then
+    echo "pi: web search enabled (BRAVE_API_KEY present)"
+  else
+    echo "pi: web search DISABLED (no BRAVE_API_KEY) — the skill is installed but will not be announced to the model"
+  fi
+
   echo "pi: config written to $PI_AGENT_DIR (url=$LLM_URL, model=$LLM_MODEL_ID)"
 
   # Fail loudly at boot rather than on the teacher's first prompt.
