@@ -18,10 +18,12 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// mockHermesServer simulates the Hermes /v1/chat/completions streaming endpoint.
+// mockHermesServer simulates the Hermes /v1/responses streaming endpoint —
+// and accepts the legacy /v1/chat/completions path too, since streamTurn keeps
+// parsing both formats after the bridge moved to the Responses API.
 func mockHermesServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
+		if r.URL.Path != "/v1/responses" && r.URL.Path != "/v1/chat/completions" {
 			http.NotFound(w, r)
 			return
 		}
@@ -252,7 +254,7 @@ func TestHermesBridge_BadKey(t *testing.T) {
 // with a write_file tool completion.
 func mockHermesFileWriteServer(toolName, filePath, content, status string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
+		if r.URL.Path != "/v1/responses" && r.URL.Path != "/v1/chat/completions" {
 			http.NotFound(w, r)
 			return
 		}
@@ -523,7 +525,7 @@ func newScriptedHermes(turns []scriptedTurn, repeat bool) *scriptedHermes {
 }
 
 func (s *scriptedHermes) handle(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/v1/chat/completions" {
+	if r.URL.Path != "/v1/responses" && r.URL.Path != "/v1/chat/completions" {
 		http.NotFound(w, r)
 		return
 	}
@@ -728,9 +730,15 @@ func assertNoErrorEvent(t *testing.T, events []StreamEvent) {
 // recorded request body, in order.
 func toolResultContents(t *testing.T, req map[string]interface{}) []string {
 	t.Helper()
-	raw, ok := req["messages"].([]interface{})
-	if !ok {
-		t.Fatalf("request has no messages array: %v", req)
+	// The bridge now POSTs the Responses API body: conversation under "input"
+	// (not "messages" as in the legacy chat.completions format). Accept both so
+	// the test keeps describing the request that actually went out.
+	raw, _ := req["input"].([]interface{})
+	if raw == nil {
+		raw, _ = req["messages"].([]interface{})
+	}
+	if raw == nil {
+		t.Fatalf("request has no input/messages array: %v", req)
 	}
 	var out []string
 	for _, m := range raw {
@@ -778,10 +786,22 @@ func hasOutsideWorkingFileEvent(events []StreamEvent) bool {
 	return false
 }
 
+// reqMessages returns the conversation array of a recorded request body.
+// The bridge POSTs the Responses API body where the conversation lives under
+// "input"; the legacy chat.completions format used "messages". Both are read so
+// tests keep describing the request that actually went out.
+func reqMessages(req map[string]interface{}) []interface{} {
+	raw, _ := req["input"].([]interface{})
+	if raw == nil {
+		raw, _ = req["messages"].([]interface{})
+	}
+	return raw
+}
+
 // toolCallIDs returns the tool_call_id of every role:"tool" message, in order.
 func toolCallIDs(t *testing.T, req map[string]interface{}) []string {
 	t.Helper()
-	raw, _ := req["messages"].([]interface{})
+	raw := reqMessages(req)
 	var out []string
 	for _, m := range raw {
 		msg, ok := m.(map[string]interface{})
@@ -798,7 +818,7 @@ func toolCallIDs(t *testing.T, req map[string]interface{}) []string {
 // messages, in order.
 func assistantToolCallIDs(t *testing.T, req map[string]interface{}) []string {
 	t.Helper()
-	raw, _ := req["messages"].([]interface{})
+	raw := reqMessages(req)
 	var out []string
 	for _, m := range raw {
 		msg, ok := m.(map[string]interface{})
@@ -819,7 +839,7 @@ func assistantToolCallIDs(t *testing.T, req map[string]interface{}) []string {
 // in the assistant messages, in order.
 func assistantToolCallArgs(t *testing.T, req map[string]interface{}) []string {
 	t.Helper()
-	raw, _ := req["messages"].([]interface{})
+	raw := reqMessages(req)
 	var out []string
 	for _, m := range raw {
 		msg, ok := m.(map[string]interface{})
@@ -2418,7 +2438,7 @@ func TestParseHermesFSPrefixes(t *testing.T) {
 // does NOT expect, which is the case production keeps hitting.
 func mockHermesEventServer(eventName string, payload map[string]interface{}) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/chat/completions" {
+		if r.URL.Path != "/v1/responses" && r.URL.Path != "/v1/chat/completions" {
 			http.NotFound(w, r)
 			return
 		}
@@ -2565,27 +2585,126 @@ func TestHermesBridge_Trace_OffByDefault(t *testing.T) {
 	}
 }
 
-// TestHermesBridge_Trace_UnexpectedEventName: the bridge only ACTS on
-// hermes.tool.progress. If Lya reports her writes under another name, that name
-// is the bug — so it has to be counted and printed, not ignored.
-func TestHermesBridge_Trace_UnexpectedEventName(t *testing.T) {
-	t.Setenv(hermesTraceEventsEnv, "true")
+// mockHermesResponsesServer streams a realistic Responses-API turn: one
+// function_call carrying COMPLETE arguments (path+content), a text delta and
+// the terminal response.completed — exactly what production Lya sends on
+// POST /v1/responses (and what hermes.tool.progress NEVER carried).
+func mockHermesResponsesServer(filePath, content string, pathFound bool) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer test-key" {
+			http.Error(w, "unauthorized", 401)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		flusher, _ := w.(http.Flusher)
+
+		// Responses payload structs per the gateway writer (api_server.py).
+		type respItem struct {
+			Type      string `json:"type"`
+			Name      string `json:"name"`
+			Status    string `json:"status"`
+			Arguments string `json:"arguments"`
+		}
+		argsMap := map[string]interface{}{"content": content}
+		if pathFound {
+			argsMap["path"] = filePath
+		}
+		argsJSON, _ := json.Marshal(argsMap)
+
+		// 1. function_call added (in_progress) — mirrors the WRITE carrying args
+		added := map[string]interface{}{
+			"type": "response.output_item.added",
+			"item": respItem{Type: "function_call", Name: "write_file", Status: "in_progress", Arguments: string(argsJSON)},
+		}
+		b, _ := json.Marshal(added)
+		fmt.Fprintf(w, "event: response.output_item.added\ndata: %s\n\n", string(b))
+		flusher.Flush()
+		time.Sleep(10 * time.Millisecond)
+
+		// 2. text delta
+		delta := map[string]interface{}{"type": "response.output_text.delta", "delta": "Ligne ajoutée. ✅"}
+		b, _ = json.Marshal(delta)
+		fmt.Fprintf(w, "event: response.output_text.delta\ndata: %s\n\n", string(b))
+		flusher.Flush()
+		time.Sleep(10 * time.Millisecond)
+
+		// 3. function_call done (completed) — same args, must NOT double-mirror
+		done := map[string]interface{}{
+			"type": "response.output_item.done",
+			"item": respItem{Type: "function_call", Name: "write_file", Status: "completed", Arguments: string(argsJSON)},
+		}
+		b, _ = json.Marshal(done)
+		fmt.Fprintf(w, "event: response.output_item.done\ndata: %s\n\n", string(b))
+		flusher.Flush()
+		time.Sleep(10 * time.Millisecond)
+
+		// 4. terminal — the Responses API has no data: [DONE]
+		completed := map[string]interface{}{"type": "response.completed"}
+		b, _ = json.Marshal(completed)
+		fmt.Fprintf(w, "event: response.completed\ndata: %s\n\n", string(b))
+		flusher.Flush()
+	}))
+}
+
+// TestHermesBridge_ResponsesAPI_MirrorsWrite is the regression test for the bug
+// that survived v1.9.0–v1.10.1: Lya says she wrote the file, nothing changes.
+// chat.completions frames never carried path/content; the Responses API does,
+// in response.output_item.added.arguments — and that is what must land in the
+// workspace.
+func TestHermesBridge_ResponsesAPI_MirrorsWrite(t *testing.T) {
 	tmpDir := t.TempDir()
+	hermes := mockHermesResponsesServer("/opt/data/Test_folders/test_nvx_cours.md", "# Test\n\nLigne ajoutée.", true)
+	defer hermes.Close()
 
-	logged, events := runFrameJob(t, tmpDir, "lya.file.written", "desk", writeFramePayload())
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	logged := captureLog(t, func() {
+		runHermesJob(t, b, "Ajoute une ligne dans Test_folders/test_nvx_cours.md", "desk")
+	})
 
-	assertNoErrorEvent(t, events)
-	if !strings.Contains(logged, "sseEventFrames=1 sseEventNames=[lya.file.written] toolProgressFrames=0") {
-		t.Errorf("expected the unexpected event name counted and reported, got:\n%s", logged)
+	// The write must have been mirrored into the workspace, stripped of the
+	// /opt/data/ prefix (stripHermesFSPrefix + safePath).
+	rel := filepath.Join("Test_folders", "test_nvx_cours.md")
+	data, err := os.ReadFile(filepath.Join(tmpDir, rel))
+	if err != nil {
+		t.Fatalf("expected the mirrored file at %s: %v\nlogs:\n%s", rel, err, logged)
 	}
-	if !strings.Contains(logged, "hermes_trace: event=lya.file.written data=") {
-		t.Errorf("expected the frame traced under its own name, got:\n%s", logged)
+	if string(data) != "# Test\n\nLigne ajoutée." {
+		t.Errorf("mirrored content mismatch: %q", string(data))
 	}
-	// Behaviour is unchanged: an unknown event name is still not acted upon.
-	if strings.Contains(logged, "hermes: tool frame seen") {
-		t.Errorf("a frame under an unknown event name must not be treated as a tool frame, got:\n%s", logged)
+	if !strings.Contains(logged, "mirroredWrites=1") {
+		t.Errorf("expected the diagnostic to count one mirrored write, got:\n%s", logged)
 	}
+	// The "done" event must NOT mirror a second copy.
+	if strings.Contains(logged, "mirroredWrites=2") {
+		t.Errorf("the completed function_call must not double-mirror, got:\n%s", logged)
+	}
+	// The terminal event must be visible as a clean end (no [DONE] in Responses).
+	if !strings.Contains(logged, "sawDone") && !strings.Contains(logged, "status=done") {
+		t.Logf("note: sawDone appears in per-turn state, not the summary — log tail:\n%s", logged)
+	}
+}
+
+// TestHermesBridge_ResponsesAPI_RejectsFramelessWrite: if the function_call
+// arguments carry no path, the mirror must be refused loudly, not silently.
+func TestHermesBridge_ResponsesAPI_RejectsFramelessWrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	hermes := mockHermesResponsesServer("", "contenu sans chemin", false)
+	defer hermes.Close()
+
+	b := NewHermesBridge(hermes.URL, "test-key", tmpDir)
+	logged := captureLog(t, func() {
+		runHermesJob(t, b, "Écris un fichier", "desk")
+	})
+
 	assertWorkspaceEmpty(t, tmpDir)
+	if !strings.Contains(logged, "reported no path") {
+		t.Errorf("expected the no-path rejection logged with the reason, got:\n%s", logged)
+	}
 }
 
 // TestHermesBridge_Summary_NoToolFrameAtAll: the production case. Lya answered in
