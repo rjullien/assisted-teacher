@@ -99,7 +99,7 @@ Les fichiers Markdown sont la source de vérité. Les exports sont générés à
 | `PI_MODEL_ID` | `opencode-go/deepseek-v4-flash` | Identifiant envoyé à Bifrost |
 | `BIFROST_URL` | `http://bifrost.openclaw.svc.cluster.local:8080/v1` | Endpoint LLM de pi |
 | `BIFROST_API_KEY` | — | Optionnelle : Bifrost est sans auth depuis le cluster |
-| `BRAVE_API_KEY` | — | Clé Brave Search, partagée par les 3 modes. Absente : aucune recherche web n'est proposée (voir [Recherche web](#recherche-web-brave-search)) |
+| `BRAVE_SEARCH_API_KEY` | — | Clé Brave Search, partagée par les 3 modes. Absente : aucune recherche web n'est proposée (voir [Recherche web](#recherche-web-brave-search)) |
 
 ### Auth vers Lya (Hermès)
 
@@ -120,7 +120,7 @@ Même pattern possible sur `hermes-leo` / TripKit.
 | Mode | Écran | Agent | Fichiers | Recherche web |
 |---|---|---|---|---|
 | **Desk** | 3 panneaux | Hermes/Lya via `/ws/acp` | L'enseignante écrit ; « Insérer » pour reprendre une réponse | outil `web_search` |
-| **Pi** | les mêmes 3 panneaux | pi via `/ws/agent/pi` | **pi lit et écrit les fichiers lui-même** | compétence `web-search` (curl) |
+| **Pi** | les mêmes 3 panneaux | pi via `/ws/agent/pi` | **pi lit et écrit les fichiers lui-même** | outil `web_search` (extension pi) |
 | **Lya** | plein écran | Hermes/Lya via `/ws/acp` | aucun | outil `web_search` |
 
 Le mode Pi n'apparaît que si le serveur l'annonce via `GET /api/agents`. Un mode mémorisé mais indisponible retombe sur Desk.
@@ -129,35 +129,43 @@ Le mode Pi n'apparaît que si le serveur l'annonce via `GET /api/agents`. Un mod
 
 `entrypoint.sh` écrit `models.json` et `settings.json` dans `$HOME/.pi/agent/` au démarrage — **le seul endroit où pi les lit**. Il n'existe pas de variable d'environnement pour pointer ailleurs.
 
-Outils : `--tools read,edit,write,grep,find,ls,bash` est la liste complète des outils intégrés de pi (vérifiée sur `pi --help` en 0.84.2 — il n'existe pas d'outil `powershell`). Doublée par `defaultTools` dans `settings.json`. `TestPi_ToolAllowlistIsExact` épingle la chaîne, parce que `--tools` **n'est pas validé par pi** : `--tools read,jenexistepas` est accepté en silence, donc une faute de frappe désactiverait un outil sans aucune erreur au démarrage.
+Outils : `--tools read,edit,write,grep,find,ls,web_search`. Les six premiers sont des outils intégrés de pi ; `web_search` vient de l'extension `backend/pi-config/extensions/brave-search`. Doublée par `defaultTools` dans `settings.json` pour les intégrés. `TestPi_ToolAllowlistIsExact` épingle la chaîne, parce que `--tools` **n'est pas validé par pi** : `--tools read,jenexistepas` est accepté en silence, donc une faute de frappe désactiverait un outil sans aucune erreur au démarrage.
 
-**`bash` est inclus depuis la v1.13.0, et c'était exclu avant.** C'est la seule façon de donner la recherche web à pi : il n'a pas d'outil de recherche intégré ni d'API d'outils personnalisés ([earendil-works/pi#190](https://github.com/earendil-works/pi/issues/190) est une proposition, pas une release), donc la compétence web-search fait ce qu'une compétence peut faire — un `curl` depuis un shell.
+**`bash` reste exclu.** `cmd.Dir` et `safePath()` encadrent les **outils fichiers**, pas un sous-processus : un shell rendrait la prison du workspace indicative. La recherche web n'a pas besoin de shell parce que pi expose une **API d'outils personnalisés**, `pi.registerTool()` ([docs/extensions.md](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md)), présente en 0.84.2. L'extension appelle Brave depuis le process de pi.
 
-Ce que ça coûte, dit franchement : un shell contourne toutes les frontières de chemin du backend. `cmd.Dir` et `safePath()` encadrent les **outils fichiers**, pas un sous-processus — avec `bash`, la prison du workspace devient indicative. Ce qui tient encore : le rayon d'action reste le conteneur (aucun montage hôte au-delà du PVC workspace), `--no-approve` et `defaultProjectTrust: never` empêchent d'honorer un `.pi/` déposé par l'enseignante, et `--no-context-files` garde un `AGENTS.md` déposé dans le workspace hors du prompt.
+**`web_search` doit figurer dans `--tools`.** Mesuré sur 0.84.2 : `--tools` est un allowlist strict sur **tous** les outils, extensions comprises. En l'omettant, l'extension se charge sans erreur mais pi ne déclare jamais l'outil au modèle. Liste réellement déclarée, relevée sur l'image :
+
+```
+edit, find, grep, ls, read, web_search, write
+```
+
+Les autres garde-fous inchangés : `--no-approve` et `defaultProjectTrust: never` empêchent d'honorer un `.pi/` déposé par l'enseignante, `--no-context-files` garde un `AGENTS.md` déposé dans le workspace hors du prompt.
 
 ### Recherche web (Brave Search)
 
-Une seule variable, `BRAVE_API_KEY`, pour les trois modes — mais deux chemins techniques, parce que Lya et pi n'ont pas les mêmes capacités.
+Une seule variable, `BRAVE_SEARCH_API_KEY`, pour les trois modes — mais deux chemins techniques, parce que Lya et pi ne s'exécutent pas au même endroit.
+
+Ce nom est celui qu'impose l'image tierce `nousresearch/hermes-agent`, qui porte aussi les pods `hermes-lya` et `hermes-leo`. Comme cette image n'est pas modifiable et que ce dépôt l'est, c'est ce dépôt qui s'aligne : une seule entrée Infisical alimente tout le cluster, et `grep -r BRAVE_SEARCH_API_KEY` retrouve la chaîne de bout en bout.
 
 | Mode | Mécanisme | Ce que voit l'enseignante |
 |---|---|---|
 | **Desk**, **Lya** | Le backend déclare un outil `web_search` dans la requête `/v1/responses` et exécute l'appel Brave lui-même (`internal/bridge/brave.go`) | `🔍 Recherche web : <termes>` dans le fil |
-| **Pi** | La clé est exportée au sous-processus (`BRAVE_SEARCH_API_KEY` + `BRAVE_API_KEY`) et la compétence `web-search` appelle `curl` | l'appel apparaît comme un outil `bash` |
+| **Pi** | La clé (trimmée) est exportée au sous-processus, et l'extension `brave-search` enregistre un outil `web_search` qui appelle Brave depuis le process de pi | l'appel apparaît comme un outil `web_search` |
 
 Points à connaître :
 
-- **Pas de clé, pas d'outil.** L'outil `web_search` n'est pas déclaré à Lya et la compétence n'est pas annoncée à pi. Les deux répondent alors sans recherche, plutôt que d'échouer sur un 401 au milieu d'une réponse.
+- **Pas de clé, pas d'outil.** L'outil `web_search` n'est pas déclaré à Lya et n'est pas annoncé à pi. Les deux répondent alors sans recherche, plutôt que d'échouer sur un 422 au milieu d'une réponse.
 - **Un échec Brave n'est jamais une erreur de job.** Timeout, 429, clé invalide : le résultat d'outil dit à l'agent de chercher avec ses propres moyens et la réponse continue. C'est pour ça que tous les messages d'erreur de `brave.go` finissent par la même phrase.
 - **`web_search` est en lecture seule**, donc proposé dans **tous** les modes, y compris `lya` et le sous-mode « copie/insertion » où aucun outil fichier n'est armé. Un appel à un outil fichier dans ces modes reste refusé (`TestHermesBridge_WebSearch_AllowedInLyaModeButWriteStillRefused`).
-- La compétence pi vit dans `backend/pi-config/skills/web-search/SKILL.md` et est copiée dans `$HOME/.pi/agent/skills/` par `entrypoint.sh`. Vérifier qu'elle est bien chargée :
+- L'extension pi vit dans `backend/pi-config/extensions/brave-search/` et est copiée dans `$HOME/.pi/agent/extensions/` par `entrypoint.sh`. Pi la charge via jiti : pas d'étape de compilation TypeScript, et pas de `node_modules` à embarquer puisque pi fournit `typebox`. Vérifier qu'elle est bien chargée :
 
 ```bash
-kubectl -n assisted-teacher logs deploy/assisted-teacher-backend | grep -E 'pi: skills|pi: web search'
-# pi: skills installed: web-search
-# pi: web search enabled (BRAVE_API_KEY present)
+kubectl -n assisted-teacher logs deploy/assisted-teacher-backend | grep -E 'pi: extensions|pi: web search'
+# pi: extensions installed: brave-search
+# pi: web search enabled (BRAVE_SEARCH_API_KEY len=32)
 ```
 
-- La clé est trimmée (`NewBraveSearch`) : un `\n` final venant d'Infisical n'atterrit pas dans l'en-tête `X-Subscription-Token`, où il produirait un « clé invalide » trompeur.
+- La clé est trimmée (`NewBraveSearch`, et `readApiKey` côté extension). Contrairement à ce qu'on pourrait croire, ce n'est pas pour protéger l'en-tête : vérifié, `undici` retire lui-même les espaces en fin de valeur d'en-tête, donc un `\n` ne casse pas la requête. Le trim sert à ce que le test de vacuité soit juste — une clé Infisical créée vide vaut `"\n"`, qui est truthy, et partirait en appel Brave pour récolter un 422 au lieu d'être traitée comme absente.
 
 ### Diagnostiquer les écritures de Lya (mode Desk / « Mise à jour directe »)
 

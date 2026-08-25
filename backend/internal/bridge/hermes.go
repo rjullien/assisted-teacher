@@ -178,7 +178,7 @@ type HermesBridge struct {
 	// turned on for one deployment when the shape of her frames has to be
 	// established rather than assumed. See hermesTraceEventsEnv.
 	traceEvents bool
-	// brave is the Brave Search client. nil when BRAVE_API_KEY is unset — in that
+	// brave is the Brave Search client. nil when BRAVE_SEARCH_API_KEY is unset — in that
 	// case web_search is not declared to the model at all.
 	brave    *BraveSearch
 	hub      *Hub
@@ -806,7 +806,7 @@ func (b *HermesBridge) execFileTool(ctx context.Context, name, rawArgs string) (
 	// tools, and it never mutates the workspace (changedPath is always "").
 	if name == "web_search" {
 		if b.brave == nil {
-			return "", "", fmt.Errorf("web_search indisponible : BRAVE_API_KEY non configurée")
+			return "", "", fmt.Errorf("web_search indisponible : BRAVE_SEARCH_API_KEY non configurée")
 		}
 		var searchArgs struct {
 			Query string `json:"query"`
