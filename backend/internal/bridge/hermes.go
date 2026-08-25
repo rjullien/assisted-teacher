@@ -294,6 +294,16 @@ func (b *HermesBridge) stripHermesFSPrefix(path string) (string, bool) {
 // are the only place that can say so.
 const hermesToolProgressEvent = "hermes.tool.progress"
 
+// hermesResponsesEndpoint is the OpenAI Responses API path. Unlike
+// /v1/chat/completions — whose hermes.tool.progress frames carry only
+// {tool, emoji, label, toolCallId, status}, never the file content — the
+// Responses stream emits output_item.added / done items of type
+// "function_call" with a COMPLETE `arguments` JSON string (path + content for
+// write_file). That is the only channel on which the workspace mirroring can
+// actually work; v1.9.0–v1.10.1 all assumed a payload shape no
+// chat.completions frame ever carried.
+const hermesResponsesEndpoint = "/v1/responses"
+
 // hermesTraceEventsEnv turns on raw logging of every SSE frame received from
 // Hermes. Off by default: a traced job logs the teacher's course content, which
 // is not something to keep in the cluster logs permanently.
@@ -1173,10 +1183,15 @@ func (b *HermesBridge) callHermesStream(ctx context.Context, job *Job, content, 
 	}()
 
 	for loops = 1; loops <= maxToolLoops; loops++ {
+		// Responses API request: `input` carries the conversation, `instructions`
+		// the system prompt. This is the format that makes the gateway stream
+		// every tool call WITH its arguments (path + content) — see
+		// hermesToolProgressEvent / the mirroring in streamTurn.
 		payload := map[string]interface{}{
-			"messages": messages,
-			"provider": "custom",
-			"stream":   true,
+			"input":        messages,
+			"instructions": systemPrompt,
+			"provider":     "custom",
+			"stream":       true,
 		}
 		if toolsEnabled {
 			payload["tools"] = hermesFileTools
@@ -1460,10 +1475,13 @@ func budgetToolResult(result string, used *int, alwaysDeliver bool) string {
 		"\n\n[…coupé : budget de contexte des outils atteint. Ne réécris pas ce fichier en entier à partir de cet extrait, utilise patch_file.]"
 }
 
-// postHermesStream does POST /v1/chat/completions with stream:true and maps
-// non-2xx responses to the teacher-facing errors startJob knows about.
+// postHermesStream does POST to the Hermes gateway and maps non-2xx responses
+// to the teacher-facing errors startJob knows about. The endpoint defaults to
+// /v1/responses — the OpenAI Responses API, whose stream carries every tool
+// call with its COMPLETE arguments (path + content) — NOT /v1/chat/completions,
+// whose hermes.tool.progress frames never contained the file content.
 func (b *HermesBridge) postHermesStream(ctx context.Context, body []byte) (*http.Response, error) {
-	req, _ := http.NewRequestWithContext(ctx, "POST", b.hermesURL+"/v1/chat/completions", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(ctx, "POST", b.hermesURL+hermesResponsesEndpoint, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+b.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
@@ -1598,7 +1616,27 @@ func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode, deskMode strin
 			break
 		}
 
-		// Handle tool progress events from Hermes
+		// Responses API events (POST /v1/responses): unlike chat.completions, whose
+		// hermes.tool.progress frames only carry {tool, label, status}, the Responses
+		// stream emits output_item.added/done items of type "function_call" with a
+		// COMPLETE `arguments` JSON string — including path and content for
+		// write_file. That is what the mirroring needs; see handleToolFileWrite.
+		if strings.HasPrefix(eventName, "response.") {
+			handled, stop, err := b.handleResponsesFrame(job, &res, eventName, data, mode, deskMode)
+			if err != nil {
+				return res, err
+			}
+			if stop {
+				break
+			}
+			if handled {
+				continue
+			}
+			// Unrecognised response.* frame: fall through to the generic chunk
+			// parser below instead of dropping it silently.
+		}
+
+		// Handle tool progress events from Hermes (legacy chat.completions path)
 		if eventName == hermesToolProgressEvent {
 			var tool interface{}
 			json.Unmarshal([]byte(data), &tool)
@@ -1737,6 +1775,103 @@ func (b *HermesBridge) streamTurn(job *Job, body io.Reader, mode, deskMode strin
 		res.toolCalls = append(res.toolCalls, acc)
 	}
 	return res, nil
+}
+
+// handleResponsesFrame processes ONE SSE frame of the OpenAI Responses API
+// (POST /v1/responses). It returns:
+//   - handled=true when the frame was consumed (callers skip the legacy parser)
+//   - stop=true when the turn is over (response.completed)
+//   - an error for a malformed frame that must abort the job
+//
+// The frames this bridge acts upon:
+//
+//	response.output_item.added / .done
+//	    item.type == "function_call" → name + arguments (JSON string, COMPLETE:
+//	    write_file carries path AND content here, unlike the legacy
+//	    hermes.tool.progress frames) → mirror the write into WORKSPACE_DIR.
+//	response.output_text.delta
+//	    delta → teacher-facing streamed text.
+//	response.completed
+//	    end of the turn (the Responses API has no data: [DONE] sentinel).
+func (b *HermesBridge) handleResponsesFrame(job *Job, res *turnResult, eventName, data, mode, deskMode string) (handled, stop bool, err error) {
+	switch eventName {
+	case "response.output_item.added", "response.output_item.done":
+		var envelope struct {
+			Item *struct {
+				Type      string `json:"type"`
+				Name      string `json:"name"`
+				Status    string `json:"status"`
+				Arguments string `json:"arguments"`
+			} `json:"item"`
+		}
+		if err := json.Unmarshal([]byte(data), &envelope); err != nil {
+			return true, false, nil // not a frame we can act on — count, don't crash
+		}
+		if envelope.Item == nil || envelope.Item.Type != "function_call" {
+			return true, false, nil // function_call_output / message / reasoning — nothing to mirror
+		}
+		// Mirror on the FIRST frame that carries the complete arguments: the
+		// "added" (status in_progress) event. The matching "done" event repeats
+		// the same arguments — mirroring it again would double-write the file
+		// and double-count mirroredWrites.
+		if eventName == "response.output_item.done" {
+			return true, false, nil
+		}
+		// Mirror the write. item.arguments is a JSON string carrying the COMPLETE
+		// arguments (path + content) — exactly what the legacy hermes.tool.progress
+		// frames never had. Reuse handleToolFileWrite with a payload assembled from
+		// those arguments so every existing guard (workdir, allowlist, safePath)
+		// still applies.
+		payload := map[string]interface{}{
+			"name":   envelope.Item.Name,
+			"status": "done",
+		}
+		var args map[string]interface{}
+		if json.Unmarshal([]byte(envelope.Item.Arguments), &args) == nil && args != nil {
+			// handleToolFileWrite reads the nested map under "args" (strFromArgs),
+			// so the decoded arguments land under that key — NOT "arguments".
+			payload["args"] = args
+		}
+		if b.legacyWritesEnabled(mode, deskMode) {
+			mirror := b.handleToolFileWrite(payload)
+			switch {
+			case mirror.path != "":
+				res.mirroredWrites++
+				job.append(StreamEvent{
+					Type: "tool",
+					Tool: map[string]interface{}{
+						"name": "file_changed",
+						"path": mirror.path,
+					},
+				})
+			case mirror.skipped:
+				res.skippedWrites++
+			}
+		}
+		return true, false, nil
+
+	case "response.output_text.delta":
+		var delta struct {
+			Text string `json:"delta"`
+		}
+		if err := json.Unmarshal([]byte(data), &delta); err != nil {
+			return true, false, nil
+		}
+		if delta.Text != "" {
+			res.text += delta.Text
+			job.append(StreamEvent{Type: "delta", Text: delta.Text})
+		}
+		return true, false, nil
+
+	case "response.completed":
+		res.sawDone = true
+		return true, true, nil
+
+	default:
+		// Unknown response.* event: let the legacy parser see it (harmless),
+		// the SSE counter above already recorded it by name.
+		return false, false, nil
+	}
 }
 
 // streamToWS sends backlog + live events to the WebSocket. Returns when job finishes or WS disconnects.

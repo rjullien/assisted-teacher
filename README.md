@@ -134,6 +134,12 @@ Frontière fichiers : `--tools read,edit,write,grep,find,ls` est une allowlist s
 
 Symptôme : Lya répond « c'est fait, j'ai ajouté la ligne… », et le fichier de travail n'a pas changé. Trois versions (v1.9.0 interception des écritures, v1.10.0 outils déclarés, v1.10.1 mapping des chemins côté Hermes) ont été écrites contre une forme **supposée** de ses frames d'outil ; aucune vraie frame n'avait jamais été observée. Les commandes ci-dessous servent à établir les faits avant de tenter un quatrième correctif.
 
+#### 0. Pourquoi ça ne marchait pas (v1.9.0 → v1.11.0)
+
+Le bridge appelait `POST /v1/chat/completions`. Ses frames `hermes.tool.progress` ne portent **jamais** le contenu du fichier : en production comme dans le code de la gateway, elles ne contiennent que `{tool, emoji, label, toolCallId, status}` — statuts `running`/`completed`, **ni `path` ni `content`**. Toute garde de `handleToolFileWrite` fondée sur `status == "done"` ou sur des clés `path`/`content` rejetait donc **toutes** les frames, silencieusement.
+
+Depuis v1.12.0, le bridge utilise **`POST /v1/responses`** (OpenAI Responses API), dont le flux émet `response.output_item.added` avec `item.type == "function_call"` et `arguments` **complets** (JSON string avec `path` + `content` pour `write_file`). Le mirroring se fait sur cette frame (une seule fois : le `done` répète les mêmes arguments et n'est pas re-mirroré). C'est le canal qui transporte réellement le contenu.
+
 #### 1. Une frame d'outil est-elle arrivée, et sous quel nom ? (toujours actif)
 
 ```bash
