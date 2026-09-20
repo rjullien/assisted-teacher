@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeTool, isFileOp, isToolRunning, toolLabel } from './tools'
+import { normalizeTool, isFileOp, isSearchOp, isToolRunning, toolLabel } from './tools'
 import { t as tFn } from './i18n'
 
 const t = (key: string, params?: Record<string, string | number>) => tFn('fr', key, params)
@@ -12,6 +12,7 @@ describe('normalizeTool', () => {
       status: 'started',
       error: '',
       outsideWorkingFile: false,
+      query: '',
     })
   })
 
@@ -54,7 +55,14 @@ describe('normalizeTool', () => {
   })
 
   it('never returns undefined for an unusable payload', () => {
-    const empty = { name: '', path: '', status: '', error: '', outsideWorkingFile: false }
+    const empty = {
+      name: '',
+      path: '',
+      status: '',
+      error: '',
+      outsideWorkingFile: false,
+      query: '',
+    }
     expect(normalizeTool(undefined)).toEqual(empty)
     expect(normalizeTool(null)).toEqual(empty)
     expect(normalizeTool({})).toEqual(empty)
@@ -197,5 +205,77 @@ describe('isToolRunning', () => {
     expect(
       toolLabel(normalizeTool({ name: 'write_file', path: 'a.md', status: 'error', error: 'boom' }), t)
     ).toBe('⚠️ Échec sur a.md : boom')
+  })
+})
+
+
+describe('web_search', () => {
+  const tEn = (key: string, params?: Record<string, string | number>) => tFn('en', key, params)
+
+  it('reads the query, and its aliases', () => {
+    expect(normalizeTool({ name: 'web_search', status: 'done', query: 'present perfect' }).query).toBe(
+      'present perfect'
+    )
+    expect(normalizeTool({ name: 'web_search', q: 'irregular verbs' }).query).toBe('irregular verbs')
+    expect(normalizeTool({ name: 'web_search', args: { query: 'phrasal verbs' } }).query).toBe(
+      'phrasal verbs'
+    )
+  })
+
+  // A search carries a query where a file tool carries a path. Keeping the two
+  // apart is what stops Chat.tsx treating a search as a file operation: it keys
+  // the editor reload and the "workspace touched" flag off path.
+  it('never fills path from a query', () => {
+    const tool = normalizeTool({ name: 'web_search', status: 'done', query: 'present perfect' })
+    expect(tool.path).toBe('')
+    expect(isFileOp(tool)).toBe(false)
+    expect(isSearchOp(tool)).toBe(true)
+  })
+
+  it('is a search op only for search tools with something to show', () => {
+    expect(isSearchOp(normalizeTool({ name: 'web_search', query: 'x', status: 'done' }))).toBe(true)
+    // A failed call may not even have a decodable query — it still belongs in
+    // the thread, or the only trace of the failure flashes past.
+    expect(isSearchOp(normalizeTool({ name: 'web_search', status: 'error', error: 'quota' }))).toBe(
+      true
+    )
+    expect(isSearchOp(normalizeTool({ name: 'web_search' }))).toBe(false)
+    expect(isSearchOp(normalizeTool({ name: 'read_file', path: 'a.md' }))).toBe(false)
+    // pi searches through bash, which is indistinguishable from any other
+    // command it runs, so it must not be labelled as a search. Asserted with a
+    // payload that WOULD qualify on every other count — a bare
+    // {name:'bash'} passes even when bash is wrongly in the set, so it proves
+    // nothing.
+    expect(isSearchOp(normalizeTool({ name: 'bash', status: 'error', error: 'boom' }))).toBe(false)
+    expect(isSearchOp(normalizeTool({ name: 'bash', status: 'done', query: 'curl …' }))).toBe(false)
+  })
+
+  it('labels a search with its terms, in fr and en', () => {
+    const running = normalizeTool({ name: 'web_search', query: 'present perfect', status: 'running' })
+    const done = normalizeTool({ name: 'web_search', query: 'present perfect', status: 'done' })
+    expect(toolLabel(running, t)).toBe('🔍 Recherche web : present perfect…')
+    expect(toolLabel(done, t)).toBe('🔍 Recherche web : present perfect')
+    expect(toolLabel(running, tEn)).toBe('🔍 Web search: present perfect…')
+    expect(toolLabel(done, tEn)).toBe('🔍 Web search: present perfect')
+  })
+
+  // The point of the label work: a raw "🔧 web_search" is what the generic
+  // branch produced before, and it told the teacher nothing about what was
+  // looked up.
+  it('does not fall through to the generic tool label', () => {
+    const label = toolLabel(
+      normalizeTool({ name: 'web_search', query: 'present perfect', status: 'done' }),
+      t
+    )
+    expect(label).not.toBe('🔧 web_search')
+  })
+
+  it('keeps the failure label when Brave is unavailable', () => {
+    const failed = normalizeTool({
+      name: 'web_search',
+      status: 'error',
+      error: 'quota Brave dépassé',
+    })
+    expect(toolLabel(failed, t)).toContain('quota Brave dépassé')
   })
 })

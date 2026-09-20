@@ -38,6 +38,14 @@ export interface NormalizedTool {
    * working file named at the top of the Desk panel.
    */
   outsideWorkingFile: boolean
+  /**
+   * Search terms, for `web_search`. Empty for every other tool.
+   *
+   * Carried separately from `path` on purpose: Chat.tsx keys the editor reload
+   * and the "this job touched the workspace" decision off `path`, so putting a
+   * query there would make a web search look like a file operation.
+   */
+  query: string
 }
 
 function str(v: unknown): string {
@@ -56,6 +64,7 @@ export function normalizeTool(raw: unknown): NormalizedTool {
     status: '',
     error: '',
     outsideWorkingFile: false,
+    query: '',
   }
   if (!raw) return empty
 
@@ -73,8 +82,18 @@ export function normalizeTool(raw: unknown): NormalizedTool {
   const path = str(t.path) || str(t.file) || str(args.path) || str(args.file)
   const status = str(t.status) || str(t.state)
   const error = str(t.error) || str(t.message)
+  // `q` and args.query are accepted alongside `query` for the same reason every
+  // other field here has aliases: the payload shape is not ours to control.
+  const query = str(t.query) || str(t.q) || str(args.query) || str(args.q)
 
-  return { name, path, status, error, outsideWorkingFile: t.outsideWorkingFile === true }
+  return {
+    name,
+    path,
+    status,
+    error,
+    outsideWorkingFile: t.outsideWorkingFile === true,
+    query,
+  }
 }
 
 /**
@@ -101,6 +120,16 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'patch_file',
 ])
 
+/**
+ * Tool names that search the web.
+ *
+ * `web_search` is the Hermes tool loop (Desk and Lya). pi searches through its
+ * own `bash` tool running the web-search skill, so its events arrive as `bash`
+ * and stay in the generic branch — there is no reliable way to tell a search
+ * from any other command it runs.
+ */
+export const SEARCH_TOOL_NAMES: ReadonlySet<string> = new Set(['web_search'])
+
 /** True when the payload describes a file operation worth keeping in the thread. */
 export function isFileOp(tool: NormalizedTool): boolean {
   if (!READ_TOOL_NAMES.has(tool.name) && !WRITE_TOOL_NAMES.has(tool.name)) return false
@@ -108,6 +137,17 @@ export function isFileOp(tool: NormalizedTool): boolean {
   // at all. It still belongs in the thread: routed to the transient status line
   // instead, the only trace of a failed write flashes by and disappears.
   return tool.path !== '' || tool.status === 'error'
+}
+
+/**
+ * True when the payload describes a web search worth keeping in the thread.
+ *
+ * Kept out of isFileOp deliberately: a search touches no file, and Chat.tsx uses
+ * isFileOp to decide whether the workspace changed.
+ */
+export function isSearchOp(tool: NormalizedTool): boolean {
+  if (!SEARCH_TOOL_NAMES.has(tool.name)) return false
+  return tool.query !== '' || tool.status === 'error'
 }
 
 /**
@@ -148,6 +188,11 @@ export function toolLabel(tool: NormalizedTool, t: Translate): string {
     return isToolRunning(tool)
       ? t('piChat.toolWriting', { path: tool.path })
       : t('piChat.toolWrite', { path: tool.path })
+  }
+  if (tool.query && SEARCH_TOOL_NAMES.has(tool.name)) {
+    return isToolRunning(tool)
+      ? t('piChat.toolSearching', { query: tool.query })
+      : t('piChat.toolSearched', { query: tool.query })
   }
   if (tool.name) return t('piChat.toolOther', { name: tool.name })
   return t('piChat.toolUnknown')

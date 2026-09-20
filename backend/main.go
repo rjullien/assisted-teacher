@@ -76,10 +76,13 @@ func main() {
 		fmt.Fprintf(w, `{"name":%q,"user":%q,"email":%q}`, displayName, user, email)
 	})
 
+	// Brave Search (shared across agents — read-only, no workspace mutation)
+	brave := bridge.NewBraveSearch(envOr("BRAVE_API_KEY", ""))
+
 	// Hermes bridge (connects to Lya via HTTP Runs API — reconnectable, no timeout issues)
 	hermesEnabled := *hermesKey != ""
 	if hermesEnabled {
-		hermesBridge := bridge.NewHermesBridge(*hermesURL, *hermesKey, *workDir)
+		hermesBridge := bridge.NewHermesBridge(*hermesURL, *hermesKey, *workDir, brave)
 		mux.HandleFunc("/ws/acp", hermesBridge.HandleWebSocket)
 		log.Printf("Hermes bridge: %s", *hermesURL)
 	} else {
@@ -94,7 +97,7 @@ func main() {
 		// ~/.pi/agent/models.json by entrypoint.sh.
 		piProvider := envOr("PI_PROVIDER", "bifrost")
 		piModel := envOr("PI_MODEL", "bifrost-default")
-		piBridge := bridge.NewPiBridge(piCmd, *workDir, piProvider, piModel)
+		piBridge := bridge.NewPiBridge(piCmd, *workDir, piProvider, piModel, brave)
 		mux.HandleFunc("/ws/agent/pi", piBridge.HandleWebSocket)
 	}
 

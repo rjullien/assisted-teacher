@@ -99,6 +99,7 @@ Les fichiers Markdown sont la source de vérité. Les exports sont générés à
 | `PI_MODEL_ID` | `opencode-go/deepseek-v4-flash` | Identifiant envoyé à Bifrost |
 | `BIFROST_URL` | `http://bifrost.openclaw.svc.cluster.local:8080/v1` | Endpoint LLM de pi |
 | `BIFROST_API_KEY` | — | Optionnelle : Bifrost est sans auth depuis le cluster |
+| `BRAVE_API_KEY` | — | Clé Brave Search, partagée par les 3 modes. Absente : aucune recherche web n'est proposée (voir [Recherche web](#recherche-web-brave-search)) |
 
 ### Auth vers Lya (Hermès)
 
@@ -116,11 +117,11 @@ Même pattern possible sur `hermes-leo` / TripKit.
 
 ### Les trois modes
 
-| Mode | Écran | Agent | Fichiers |
-|---|---|---|---|
-| **Desk** | 3 panneaux | Hermes/Lya via `/ws/acp` | L'enseignante écrit ; « Insérer » pour reprendre une réponse |
-| **Pi** | les mêmes 3 panneaux | pi via `/ws/agent/pi` | **pi lit et écrit les fichiers lui-même** |
-| **Lya** | plein écran | Hermes/Lya via `/ws/acp` | aucun |
+| Mode | Écran | Agent | Fichiers | Recherche web |
+|---|---|---|---|---|
+| **Desk** | 3 panneaux | Hermes/Lya via `/ws/acp` | L'enseignante écrit ; « Insérer » pour reprendre une réponse | outil `web_search` |
+| **Pi** | les mêmes 3 panneaux | pi via `/ws/agent/pi` | **pi lit et écrit les fichiers lui-même** | compétence `web-search` (curl) |
+| **Lya** | plein écran | Hermes/Lya via `/ws/acp` | aucun | outil `web_search` |
 
 Le mode Pi n'apparaît que si le serveur l'annonce via `GET /api/agents`. Un mode mémorisé mais indisponible retombe sur Desk.
 
@@ -128,7 +129,35 @@ Le mode Pi n'apparaît que si le serveur l'annonce via `GET /api/agents`. Un mod
 
 `entrypoint.sh` écrit `models.json` et `settings.json` dans `$HOME/.pi/agent/` au démarrage — **le seul endroit où pi les lit**. Il n'existe pas de variable d'environnement pour pointer ailleurs.
 
-Frontière fichiers : `--tools read,edit,write,grep,find,ls` est une allowlist stricte pour **tous** les outils. `bash` et `powershell` en sont volontairement absents — un agent qui rédige des cours n'a pas besoin d'un shell, et un shell est le seul outil qu'aucune frontière de chemin ne peut contenir. Doublé par `defaultTools` dans `settings.json`, `defaultProjectTrust: never` et `--no-approve`. Le test `TestPi_ToolAllowlistExcludesShells` échoue si un shell réapparaît dans l'argv.
+Outils : `--tools read,edit,write,grep,find,ls,bash` est la liste complète des outils intégrés de pi (vérifiée sur `pi --help` en 0.84.2 — il n'existe pas d'outil `powershell`). Doublée par `defaultTools` dans `settings.json`. `TestPi_ToolAllowlistIsExact` épingle la chaîne, parce que `--tools` **n'est pas validé par pi** : `--tools read,jenexistepas` est accepté en silence, donc une faute de frappe désactiverait un outil sans aucune erreur au démarrage.
+
+**`bash` est inclus depuis la v1.13.0, et c'était exclu avant.** C'est la seule façon de donner la recherche web à pi : il n'a pas d'outil de recherche intégré ni d'API d'outils personnalisés ([earendil-works/pi#190](https://github.com/earendil-works/pi/issues/190) est une proposition, pas une release), donc la compétence web-search fait ce qu'une compétence peut faire — un `curl` depuis un shell.
+
+Ce que ça coûte, dit franchement : un shell contourne toutes les frontières de chemin du backend. `cmd.Dir` et `safePath()` encadrent les **outils fichiers**, pas un sous-processus — avec `bash`, la prison du workspace devient indicative. Ce qui tient encore : le rayon d'action reste le conteneur (aucun montage hôte au-delà du PVC workspace), `--no-approve` et `defaultProjectTrust: never` empêchent d'honorer un `.pi/` déposé par l'enseignante, et `--no-context-files` garde un `AGENTS.md` déposé dans le workspace hors du prompt.
+
+### Recherche web (Brave Search)
+
+Une seule variable, `BRAVE_API_KEY`, pour les trois modes — mais deux chemins techniques, parce que Lya et pi n'ont pas les mêmes capacités.
+
+| Mode | Mécanisme | Ce que voit l'enseignante |
+|---|---|---|
+| **Desk**, **Lya** | Le backend déclare un outil `web_search` dans la requête `/v1/responses` et exécute l'appel Brave lui-même (`internal/bridge/brave.go`) | `🔍 Recherche web : <termes>` dans le fil |
+| **Pi** | La clé est exportée au sous-processus (`BRAVE_SEARCH_API_KEY` + `BRAVE_API_KEY`) et la compétence `web-search` appelle `curl` | l'appel apparaît comme un outil `bash` |
+
+Points à connaître :
+
+- **Pas de clé, pas d'outil.** L'outil `web_search` n'est pas déclaré à Lya et la compétence n'est pas annoncée à pi. Les deux répondent alors sans recherche, plutôt que d'échouer sur un 401 au milieu d'une réponse.
+- **Un échec Brave n'est jamais une erreur de job.** Timeout, 429, clé invalide : le résultat d'outil dit à l'agent de chercher avec ses propres moyens et la réponse continue. C'est pour ça que tous les messages d'erreur de `brave.go` finissent par la même phrase.
+- **`web_search` est en lecture seule**, donc proposé dans **tous** les modes, y compris `lya` et le sous-mode « copie/insertion » où aucun outil fichier n'est armé. Un appel à un outil fichier dans ces modes reste refusé (`TestHermesBridge_WebSearch_AllowedInLyaModeButWriteStillRefused`).
+- La compétence pi vit dans `backend/pi-config/skills/web-search/SKILL.md` et est copiée dans `$HOME/.pi/agent/skills/` par `entrypoint.sh`. Vérifier qu'elle est bien chargée :
+
+```bash
+kubectl -n assisted-teacher logs deploy/assisted-teacher-backend | grep -E 'pi: skills|pi: web search'
+# pi: skills installed: web-search
+# pi: web search enabled (BRAVE_API_KEY present)
+```
+
+- La clé est trimmée (`NewBraveSearch`) : un `\n` final venant d'Infisical n'atterrit pas dans l'en-tête `X-Subscription-Token`, où il produirait un « clé invalide » trompeur.
 
 ### Diagnostiquer les écritures de Lya (mode Desk / « Mise à jour directe »)
 
