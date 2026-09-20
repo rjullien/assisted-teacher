@@ -123,10 +123,16 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
 /**
  * Tool names that search the web.
  *
- * `web_search` is the Hermes tool loop (Desk and Lya). pi searches through its
- * own `bash` tool running the web-search skill, so its events arrive as `bash`
- * and stay in the generic branch — there is no reliable way to tell a search
- * from any other command it runs.
+ * `web_search` covers all three modes. Desk and Lya go through the Hermes tool
+ * loop; pi goes through the `web_search` tool registered by its brave-search
+ * extension. Both surface under the same name, so the teacher sees the same
+ * "Recherche web" label everywhere.
+ *
+ * `bash` is deliberately NOT here, and not merely because a shell command is
+ * indistinguishable from a search: pi has no `bash` tool at all in this app (see
+ * piAllowedTools). Keeping the name out is what makes a future re-enabling of
+ * bash show up as an unlabelled generic tool rather than being silently
+ * mislabelled as a search.
  */
 export const SEARCH_TOOL_NAMES: ReadonlySet<string> = new Set(['web_search'])
 

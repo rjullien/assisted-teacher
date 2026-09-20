@@ -77,7 +77,7 @@ func main() {
 	})
 
 	// Brave Search (shared across agents — read-only, no workspace mutation)
-	brave := bridge.NewBraveSearch(envOr("BRAVE_API_KEY", ""))
+	brave := bridge.NewBraveSearch(envOr("BRAVE_SEARCH_API_KEY", ""))
 
 	// Hermes bridge (connects to Lya via HTTP Runs API — reconnectable, no timeout issues)
 	hermesEnabled := *hermesKey != ""

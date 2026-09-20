@@ -330,9 +330,11 @@ func piArgvFromRun(t *testing.T, b *PiBridge, argvFile string) []string {
 // The tool list is an explicit allowlist and nothing is implicit about it: this
 // asserts the actual argv element by element.
 //
-// bash is now EXPECTED — it is what makes the web-search skill possible (see
-// piAllowedTools). The test pins the whole set so that adding a tool is a
-// deliberate act with a failing test to update, not a silent widening.
+// bash must stay OUT: it is what keeps the workspace jail enforced rather than
+// advisory. web_search must be IN: --tools is a strict allowlist over extension
+// tools too, so omitting it silently drops the tool (measured on 0.84.2).
+// The test pins the whole set so that adding a tool is a deliberate act with a
+// failing test to update, not a silent widening.
 func TestPi_ToolAllowlistIsExact(t *testing.T) {
 	argvFile := t.TempDir() + "/argv"
 	argv := piArgvFromRun(t, newFakePiBridge(t, "happy", fakePiArgsEnv+"="+argvFile), argvFile)
@@ -361,9 +363,16 @@ func TestPi_ToolAllowlistIsExact(t *testing.T) {
 	for _, tool := range strings.Split(toolsArg, ",") {
 		got[tool] = true
 	}
-	// bash is required: without it pi cannot run the web-search skill's curl.
-	if !got["bash"] {
-		t.Error("bash is absent from --tools: the web-search skill cannot run without a shell")
+	// A shell would defeat cmd.Dir and safePath(), which bound the file tools
+	// only. Web search comes from the web_search extension tool instead.
+	if got["bash"] {
+		t.Error("bash is present in --tools: the workspace jail becomes advisory — web search must go through the web_search extension tool")
+	}
+	// web_search is an extension tool, but --tools filters those too: measured on
+	// 0.84.2, omitting it here drops it from the tools declared to the model even
+	// though the extension loaded.
+	if !got["web_search"] {
+		t.Error("web_search is absent from --tools: the extension loads but pi never declares the tool to the model")
 	}
 	for _, required := range []string{"read", "edit", "write", "grep", "find", "ls"} {
 		if !got[required] {
@@ -373,19 +382,24 @@ func TestPi_ToolAllowlistIsExact(t *testing.T) {
 	// Only names pi actually has. `pi --help` on 0.84.2 lists exactly seven
 	// built-in tools, and --tools is not validated: a name outside this set is
 	// accepted silently and enables nothing, so a typo would be invisible.
-	builtin := map[string]bool{
+	// Names pi actually has: the seven built-ins from `pi --help` on 0.84.2, plus
+	// the tools our own extensions register. --tools is not validated, so a name
+	// outside this set is accepted silently and enables nothing.
+	known := map[string]bool{
 		"read": true, "bash": true, "edit": true,
 		"write": true, "grep": true, "find": true, "ls": true,
+		"web_search": true, // registered by pi-config/extensions/brave-search
 	}
 	for tool := range got {
-		if !builtin[tool] {
-			t.Errorf("%q is not one of pi's built-in tools — --tools is not validated, so it would silently enable nothing", tool)
+		if !known[tool] {
+			t.Errorf("%q is neither a pi built-in nor a tool our extensions register — --tools is not validated, so it would silently enable nothing", tool)
 		}
 	}
 }
 
-// The skill interpolates the key straight into a curl header. The name matters:
-// BRAVE_SEARCH_API_KEY is what the official skill reads.
+// The extension reads process.env.BRAVE_SEARCH_API_KEY. One name across the whole
+// cluster: it is the one the third-party hermes-agent image imposes, and that
+// image is not ours to change.
 func TestPi_PassesBraveKeyToSubprocess(t *testing.T) {
 	envFile := t.TempDir() + "/env"
 	b := newFakePiBridgeWithBrave(t, "happy", "  brave-secret\n", fakePiEnvOut+"="+envFile)
@@ -402,22 +416,24 @@ func TestPi_PassesBraveKeyToSubprocess(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"BRAVE_SEARCH_API_KEY", "BRAVE_API_KEY"} {
-		v, ok := env[name]
-		if !ok {
-			t.Fatalf("%s was not exported to the pi subprocess", name)
-		}
-		// Trimmed: an Infisical secret carries a trailing newline, and a newline
-		// inside an HTTP header makes Brave answer "invalid key" — a misleading
-		// error that costs a debugging cycle.
-		if v != "brave-secret" {
-			t.Errorf("%s = %q, want the trimmed key %q", name, v, "brave-secret")
-		}
+	v, ok := env["BRAVE_SEARCH_API_KEY"]
+	if !ok {
+		t.Fatal("BRAVE_SEARCH_API_KEY was not exported to the pi subprocess")
+	}
+	// Trimmed: an Infisical secret carries a trailing newline, and "\n" is truthy,
+	// so an un-trimmed empty secret would send the extension into a Brave call
+	// that answers 422 instead of reporting a missing key.
+	if v != "brave-secret" {
+		t.Errorf("BRAVE_SEARCH_API_KEY = %q, want the trimmed key %q", v, "brave-secret")
+	}
+	// A second name would mean two Infisical entries to rotate in step.
+	if _, leaked := env["BRAVE_API_KEY"]; leaked {
+		t.Error("BRAVE_API_KEY was exported too: the cluster standardised on BRAVE_SEARCH_API_KEY alone")
 	}
 }
 
-// Without a key, nothing Brave-related reaches the subprocess: a skill invoked
-// with an empty header answers 401 in the middle of a lesson.
+// Without a key, nothing Brave-related reaches the subprocess: web_search called
+// with an empty token answers 422 in the middle of a lesson.
 func TestPi_NoBraveKeyNoBraveEnv(t *testing.T) {
 	envFile := t.TempDir() + "/env"
 	b := newFakePiBridge(t, "happy", fakePiEnvOut+"="+envFile)
@@ -435,18 +451,15 @@ func TestPi_NoBraveKeyNoBraveEnv(t *testing.T) {
 }
 
 // The capability has to be NAMED in the prompt: pi gets no conversation history,
-// and an unmentioned skill is a skill it never considers using.
+// so even a declared tool is one it may never consider using.
 func TestPi_PromptAnnouncesWebSearchOnlyWhenConfigured(t *testing.T) {
 	with := buildPiPrompt("systeme", "B1/unit5.md", "ajoute un exercice", true)
-	if !strings.Contains(with, "/skill:web-search") {
-		t.Errorf("expected the prompt to name the web-search skill, got:\n%s", with)
-	}
-	if !strings.Contains(with, "BRAVE_SEARCH_API_KEY") {
-		t.Errorf("expected the prompt to name the key variable, got:\n%s", with)
+	if !strings.Contains(with, "web_search") {
+		t.Errorf("expected the prompt to name the web_search tool, got:\n%s", with)
 	}
 
 	without := buildPiPrompt("systeme", "B1/unit5.md", "ajoute un exercice", false)
-	if strings.Contains(without, "web-search") {
+	if strings.Contains(without, "web_search") {
 		t.Errorf("web search must not be announced without a key, got:\n%s", without)
 	}
 

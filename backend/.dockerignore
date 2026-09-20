@@ -1,0 +1,13 @@
+# Le contexte de build est ./backend (voir .github/workflows/ci.yml).
+# L'étage de build fait `COPY . .`, l'étage d'exécution `COPY pi-config/`.
+
+# typebox n'est installé que pour exécuter les tests en CI. Au runtime, pi
+# fournit lui-même typebox aux extensions.
+pi-config/extensions/*/node_modules/
+
+# Tests et manifeste npm de l'extension : inutiles dans l'image. Laisser un
+# package.json sans node_modules à côté d'une extension pousserait pi à tenter
+# d'y résoudre des dépendances absentes.
+pi-config/extensions/*/*.test.ts
+pi-config/extensions/*/package.json
+pi-config/extensions/*/package-lock.json
