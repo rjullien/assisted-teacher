@@ -282,7 +282,7 @@ func (b *PiBridge) piArgs() []string {
 	args := []string{
 		"--mode", "rpc",
 		"--no-session",
-		// Explicit allowlist for ALL tools. bash is in it — see piAllowedTools
+		// Explicit allowlist for ALL tools. bash stays OUT — see piAllowedTools
 		// for why, and for what that costs.
 		"--tools", strings.Join(piAllowedTools, ","),
 		// Ignore any .pi/ the teacher could have dropped in the workspace via
